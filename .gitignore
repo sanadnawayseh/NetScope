@@ -1,0 +1,65 @@
+# Python environments and generated files
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage/
+build/
+dist/
+*.egg-info/
+
+# Private runtime databases, including WAL/SHM/rollback journals
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Local configuration, credentials, keys, and logs
+.env
+.env.*
+secrets/
+credentials*.json
+credentials*.toml
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+.aws/
+.ssh/
+*.log
+logs/
+
+# Editors, operating systems, and temporary artifacts
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*~
+tmp/
+temp/
+.cache/
+node_modules/
+
+# Review real captures before moving them into public screenshot folders
+screenshots/raw/
