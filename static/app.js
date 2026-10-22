@@ -1,5 +1,15 @@
 const $ = id => document.getElementById(id);
 let selectedId = null, devices = [], history = [], loading = false, historyRequest = 0, loadPromise = null, historyError = null, historyLoading = false;
+let historyRange = '', historyWindow = null, rangeSummary = null;
+let comparisonIds = new Set(), comparisonData = null, comparisonRequest = 0, comparisonChoicesKey = '';
+const CHART_GAP_MS = 300000;
+function chartTime(row) { return typeof row.checked_at === 'string' && /(?:Z|[+-]\d\d:\d\d)$/.test(row.checked_at) ? Date.parse(row.checked_at) : NaN; }
+function timeBounds(rows, window = null) {
+  if (window) return [Date.parse(window.start), Date.parse(window.end)];
+  const times = rows.map(chartTime).filter(Number.isFinite);
+  return times.length ? [Math.min(...times), Math.max(...times)] : [0, 0];
+}
+function timeFraction(row, bounds) { const time = chartTime(row); return !Number.isFinite(time) ? null : bounds[0] === bounds[1] ? .5 : (time-bounds[0])/(bounds[1]-bounds[0]); }
 const fmt = n => Number.isFinite(n) ? String(Number(n.toFixed(3))) : 'N/A';
 const latencyText = t => Number.isFinite(t.latency_ms) ? `${fmt(t.latency_ms)} ms` : Number.isFinite(t.latency_upper_bound_ms) ? `<${fmt(t.latency_upper_bound_ms)} ms` : 'N/A';
 async function api(path, options = {}) {
@@ -116,13 +126,14 @@ function render() {
   $('availability-history-label').textContent = selected ? `Selected device: ${selected.name} · ${selected.ip}:${selected.port} · latest 60 stored cycles` : 'Select a device to inspect its check results.';
   $('loss-history-label').textContent = selected ? `Selected device: ${selected.name} · ${selected.ip}:${selected.port} · latest 60 checks` : 'Select a device to inspect its packet-loss history.';
   $('history-label').textContent = selected ? `Selected device: ${selected.name} · ${selected.ip}:${selected.port} · latest 60 checks` : 'Select a device to inspect its latest 60 checks.';
+  if (selected && historyRange) for (const id of ['history-label','loss-history-label','availability-history-label']) $(id).textContent = `Selected device: ${selected.name} · ${selected.ip}:${selected.port} · selected ${historyRange} window`;
 }
 for (const key of Object.keys(sortColumns)) $('sort-' + key).addEventListener('click', () => sortDevices(key));
 async function selectHistory(id) {
   selectedId = id;
   const selected = devices.find(t => t.id === id);
   if (selected && !traceBusy) { $('trace-ip').value = selected.ip; $('trace-authorized').checked = false; }
-  history = []; historyError = null; historyLoading = false;
+  history = []; historyWindow = null; rangeSummary = null; historyError = null; historyLoading = false;
   render();
   drawChart();
   // Make selection visible immediately, including empty or failed histories.
@@ -149,18 +160,26 @@ function load(force = false) {
     }
     // History errors have their own visible chart states. A successful target
     // refresh is still evidence of a connected backend.
-    try { await drawHistory(); } catch {}
+    renderComparisonChoices();
+    try { await Promise.all([drawHistory(), loadComparison()]); } catch {}
   })().finally(() => { loading = false; });
   return loadPromise;
 }
 
 async function drawHistory() {
   const id = selectedId, requestId = ++historyRequest;
-  if (id === null) { history = []; historyError = null; historyLoading = false; drawChart(); return; }
+  if (id === null) { history = []; historyWindow = null; rangeSummary = null; historyError = null; historyLoading = false; drawChart(); return; }
   historyError = null; historyLoading = true;
   $('chart-status').textContent = 'Loading history…'; $('loss-chart-status').textContent = 'Loading history…'; $('timeline-status').textContent = 'Loading history…';
-  try { const data = await api(`/api/targets/${id}/history`); if (id !== selectedId || requestId !== historyRequest) return; history = data; historyLoading = false; drawChart(); }
-  catch (e) { if (id !== selectedId || requestId !== historyRequest) return; history = []; historyLoading = false; historyError = `History unavailable: ${e.message}. Select View history to retry.`; drawChart(); throw e; }
+  try {
+    const data = await api(historyRange ? `/api/history?targets=${id}&range=${historyRange}` : `/api/targets/${id}/history`);
+    if (id !== selectedId || requestId !== historyRequest) return;
+    historyWindow = historyRange ? {start:data.start,end:data.end} : null;
+    rangeSummary = historyRange ? data.series[0] : null;
+    history = (historyRange ? data.series[0].points : data).slice().sort((a,b)=>(Number.isFinite(chartTime(a))?chartTime(a):Infinity)-(Number.isFinite(chartTime(b))?chartTime(b):Infinity));
+    historyLoading = false; drawChart();
+  }
+  catch (e) { if (id !== selectedId || requestId !== historyRequest) return; history = []; rangeSummary = null; historyWindow = null; historyLoading = false; historyError = `History unavailable: ${e.message}. Select View history to retry.`; drawChart(); throw e; }
 }
 function drawChart() {
   drawLossChart();
@@ -169,24 +188,30 @@ function drawChart() {
   const width = canvas.getBoundingClientRect().width || 700, height = 220;
   canvas.width = Math.round(width * scale); canvas.height = height * scale; ctx.setTransform(scale, 0, 0, scale, 0, 0);
   const left = 48, right = 16, top = 15, bottom = 32;
-  const valid = history.filter(d => d.ping_ok === 1 && Number.isFinite(d.latency_ms));
+  const bounds = timeBounds(history, historyWindow);
+  const valid = history.filter(d => d.ping_ok === 1 && Number.isFinite(d.latency_ms) && Number.isFinite(chartTime(d)));
   const max = Math.max(10, ...valid.map(d => d.latency_ms)) * 1.2;
   ctx.font = '10px Segoe UI'; ctx.fillStyle = '#7f90a6'; ctx.strokeStyle = '#26313e'; ctx.lineWidth = 1;
   for (let i=0; i<4; i++) { const y = top + (height-top-bottom)*i/3; ctx.beginPath(); ctx.moveTo(left,y); ctx.lineTo(width-right,y); ctx.stroke(); ctx.fillText(`${Math.round(max*(1-i/3))}`, 8, y+3); }
   let previous = null;
   history.forEach((d,i) => {
-    if (d.ping_ok !== 1 || !Number.isFinite(d.latency_ms)) { previous = null; return; }
-    const x = left + (width-left-right)*(history.length === 1 ? .5 : i/(history.length-1)), y = top+(height-top-bottom)*(1-d.latency_ms/max);
+    const fraction = timeFraction(d, bounds);
+    if (d.ping_ok !== 1 || !Number.isFinite(d.latency_ms) || fraction === null) { previous = null; return; }
+    const x = left + (width-left-right)*fraction, y = top+(height-top-bottom)*(1-d.latency_ms/max);
     ctx.strokeStyle = '#65b9ae'; ctx.lineWidth = 2;
-    if (previous) { ctx.beginPath(); ctx.moveTo(...previous); ctx.lineTo(x,y); ctx.stroke(); }
-    ctx.fillStyle = '#65b9ae'; ctx.beginPath(); ctx.arc(x,y,2.5,0,Math.PI*2); ctx.fill(); previous = [x,y];
+    if (previous && chartTime(d)-previous[2] <= CHART_GAP_MS) { ctx.beginPath(); ctx.moveTo(previous[0],previous[1]); ctx.lineTo(x,y); ctx.stroke(); }
+    ctx.fillStyle = '#65b9ae'; ctx.beginPath(); ctx.arc(x,y,2.5,0,Math.PI*2); ctx.fill(); previous = [x,y,chartTime(d)];
   });
   ctx.fillStyle = '#7f90a6';
-  if (history.length) { ctx.textAlign = 'left'; ctx.fillText(new Date(history[0].checked_at).toLocaleTimeString(),left,height-7); ctx.textAlign = 'right'; ctx.fillText(new Date(history.at(-1).checked_at).toLocaleTimeString(),width-right,height-7); }
+  if (history.length || historyWindow) { ctx.textAlign = 'left'; ctx.fillText(new Date(bounds[0]).toLocaleString(),left,height-7); ctx.textAlign = 'right'; ctx.fillText(new Date(bounds[1]).toLocaleString(),width-right,height-7); }
   $('chart-status').textContent = !history.length ? 'No measurements yet. Run checks to collect the first sample.' : !valid.length ? 'No exact RTT samples in this window. Responses may report a bound, have unavailable RTT, or be historical process timings. Review ICMP and TCP results separately.' : `${history.length} recorded checks · ${valid.length} exact RTT samples`;
   canvas.setAttribute('aria-label', `ICMP round-trip time: ${valid.length} exact RTT samples from ${history.length} checks. ${valid.length ? `Minimum ${fmt(Math.min(...valid.map(d=>d.latency_ms)))} milliseconds, maximum ${fmt(Math.max(...valid.map(d=>d.latency_ms)))} milliseconds.` : ''}`);
   $('history-stats').replaceChildren();
   for (const [label, value] of [['Ping responses', history.length ? `${history.filter(d=>d.ping_ok===1).length}/${history.length}` : '—'], ['TCP accepted', history.length ? `${history.filter(d=>d.tcp_ok===1).length}/${history.length}` : '—'], ['Mean RTT', valid.length ? `${fmt(valid.reduce((s,d)=>s+d.latency_ms,0)/valid.length)} ms` : 'N/A']]) { const n = element('span','',label); n.append(element('b','',value)); $('history-stats').append(n); }
+  if (rangeSummary) {
+    $('history-stats').replaceChildren(element('span','',summaryText(rangeSummary.summary)));
+    $('chart-status').textContent += rangeSummary.truncated ? ' · Plot capped at newest 2000 records; summary covers full window.' : ' · Summary covers full window.';
+  }
   if (historyError || historyLoading) {
     for (const id of ['chart-status', 'loss-chart-status', 'timeline-status']) $(id).textContent = historyError || 'Loading history…';
   }
@@ -194,6 +219,7 @@ function drawChart() {
 function drawLossChart() {
   const canvas=$('loss-plot'), ctx=canvas.getContext('2d'), scale=window.devicePixelRatio||1;
   const width=canvas.getBoundingClientRect().width||700, height=220, left=48, right=16, top=15, bottom=32;
+  const bounds = timeBounds(history, historyWindow);
   canvas.width=Math.round(width*scale); canvas.height=height*scale; ctx.setTransform(scale,0,0,scale,0,0);
   ctx.font='10px Segoe UI'; ctx.strokeStyle='#26313e'; ctx.fillStyle='#7f90a6'; ctx.lineWidth=1;
   for(const percent of [100,75,50,25,0]){
@@ -203,30 +229,35 @@ function drawLossChart() {
   let previous=null;
   const valid=history.filter(d=>Number.isFinite(d.packet_loss_pct));
   history.forEach((d,i)=>{
-    if(!Number.isFinite(d.packet_loss_pct)){previous=null;return;}
-    const x=left+(width-left-right)*(history.length===1?.5:i/(history.length-1));
+    const fraction = timeFraction(d, bounds);
+    if(!Number.isFinite(d.packet_loss_pct) || fraction === null){previous=null;return;}
+    const x=left+(width-left-right)*fraction;
     const y=top+(height-top-bottom)*(1-d.packet_loss_pct/100);
     ctx.strokeStyle='#bbaa80';ctx.fillStyle='#bbaa80';ctx.lineWidth=2;
-    if(previous){ctx.beginPath();ctx.moveTo(...previous);ctx.lineTo(x,y);ctx.stroke();}
-    ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();previous=[x,y];
+    if(previous && chartTime(d)-previous[2]<=CHART_GAP_MS){ctx.beginPath();ctx.moveTo(previous[0],previous[1]);ctx.lineTo(x,y);ctx.stroke();}
+    ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();previous=[x,y,chartTime(d)];
   });
   ctx.fillStyle='#7f90a6';
-  if(history.length){ctx.textAlign='left';ctx.fillText(new Date(history[0].checked_at).toLocaleTimeString(),left,height-7);ctx.textAlign='right';ctx.fillText(new Date(history.at(-1).checked_at).toLocaleTimeString(),width-right,height-7);}
+  if(history.length || historyWindow){ctx.textAlign='left';ctx.fillText(new Date(bounds[0]).toLocaleString(),left,height-7);ctx.textAlign='right';ctx.fillText(new Date(bounds[1]).toLocaleString(),width-right,height-7);}
   $('loss-chart-status').textContent=valid.length?`${valid.length} recorded packet-loss measurements · latest ${fmt(valid.at(-1).packet_loss_pct)}%`:'No packet-loss measurements available. Run checks to collect a five-probe batch; older records remain N/A.';
   canvas.setAttribute('aria-label', `ICMP packet-loss history: ${valid.length} measurements.${valid.length?` Latest ${fmt(valid.at(-1).packet_loss_pct)} percent; minimum ${fmt(Math.min(...valid.map(d=>d.packet_loss_pct)))} percent; maximum ${fmt(Math.max(...valid.map(d=>d.packet_loss_pct)))} percent.`:''}`);
 }
 function drawCheckTimeline() {
   const timeline = $('check-timeline');
   timeline.replaceChildren();
+  const bounds = timeBounds(history, historyWindow);
   for (const [key, label] of [['icmp_check_status', 'ICMP checks'], ['tcp_check_status', 'TCP checks']]) {
     const row = element('div', 'timeline-row'), track = element('div', 'timeline-track');
     track.setAttribute('role', 'list'); track.setAttribute('aria-label', label);
     history.forEach((record, index) => {
+      const fraction = timeFraction(record, bounds);
+      if (fraction === null) return;
       const state = ['success', 'failure'].includes(record[key]) ? record[key] : 'unknown';
       const text = `${label} · cycle ${index + 1} · ${observationLabel(record.checked_at)} · ${state}${state === 'unknown' ? ' (excluded)' : ''}`;
       const mark = element('span', `timeline-mark ${state}`, state === 'success' ? '+' : state === 'failure' ? '−' : '?');
       mark.setAttribute('role', 'listitem'); mark.setAttribute('tabindex', '0');
       mark.setAttribute('aria-label', text); mark.setAttribute('title', text);
+      mark.style.left = `${fraction*100}%`;
       track.append(mark);
     });
     row.append(element('span', 'timeline-label', label), track); timeline.append(row);
@@ -234,6 +265,95 @@ function drawCheckTimeline() {
   const times = history.map(d=>d.checked_at).filter(t=>t && Number.isFinite(new Date(t).getTime())).sort((a,b)=>new Date(a)-new Date(b));
   $('timeline-status').textContent = history.length ? `${history.length} stored cycles · ${times.length ? observationLabel(times[0]) + ' → ' + observationLabel(times.at(-1)) : 'Observation times unavailable'} · oldest to newest` : 'No recorded cycles yet. Run checks to begin an observation window.';
 }
+function summaryText(s) {
+  const availability = p => `${p.toUpperCase()} sampled ${fmt(s[p].percentage)}${s[p].percentage == null ? '' : '%'} (${s[p].successful_checks}/${s[p].valid_checks}; ${s[p].excluded_checks} unknown)`;
+  return `${s.record_count} records · ${s.valid_measurements} valid · ${s.unknown_measurements} unknown · exact RTT ${s.exact_rtt_count}, mean ${fmt(s.average_latency_ms)} ms, min ${fmt(s.minimum_latency_ms)} / max ${fmt(s.maximum_latency_ms)} ms · missing RTT ${s.missing_rtt_count} · mean loss ${fmt(s.average_packet_loss_pct)}% (${s.valid_loss_count} valid; ${s.missing_loss_count} missing) · ${availability('icmp')} · ${availability('tcp')}`;
+}
+function renderComparisonChoices() {
+  const available = new Set(devices.map(t=>t.id));
+  comparisonIds = new Set([...comparisonIds].filter(id=>available.has(id)));
+  const key=JSON.stringify(devices.map(t=>[t.id,t.name]));
+  if(key===comparisonChoicesKey)return;
+  comparisonChoicesKey=key;
+  $('comparison-devices').replaceChildren();
+  for (const device of devices) {
+    const label = element('label', 'compare-choice'), input = element('input');
+    input.type = 'checkbox'; input.checked = comparisonIds.has(device.id);
+    input.addEventListener('change', () => {
+      if (input.checked && comparisonIds.size >= 4) { input.checked = false; $('comparison-status').textContent = 'Select at most four devices.'; return; }
+      if (input.checked) comparisonIds.add(device.id); else comparisonIds.delete(device.id);
+      void loadComparison();
+    });
+    label.append(input, element('span','',device.name)); $('comparison-devices').append(label);
+  }
+}
+async function loadComparison() {
+  const requestId = ++comparisonRequest;
+  if (comparisonIds.size < 2) {
+    comparisonData = null; $('comparison-panel').hidden = true;
+    $('comparison-status').textContent = 'Select two to four devices to compare. Comparison uses the chosen range, or 24 hours when Latest 60 is selected.';
+    return;
+  }
+  $('comparison-panel').hidden = false;
+  $('comparison-status').textContent = 'Loading comparison…';
+  try {
+    const data = await api(`/api/history?targets=${[...comparisonIds].join(',')}&range=${historyRange || '24h'}`);
+    if (requestId !== comparisonRequest) return;
+    comparisonData = data; renderComparison();
+  } catch (error) {
+    if (requestId !== comparisonRequest) return;
+    comparisonData = null; $('comparison-summary').replaceChildren();
+    for (const id of ['compare-rtt','compare-loss','compare-availability']) { const canvas=$(id); canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height); }
+    $('comparison-status').textContent = `Comparison unavailable: ${error.message}. Retrying on the next dashboard refresh.`;
+  }
+}
+const comparisonColors = ['#65b9ae','#c6ad81','#8eaedf','#c99ccf'];
+function renderComparison() {
+  if (!comparisonData) return;
+  $('comparison-summary').replaceChildren();
+  comparisonData.series.forEach((series,index)=>{
+    const row=element('p','muted',`${index+1}. ${series.name}: ${summaryText(series.summary)}${series.truncated ? ' · Plot capped at newest 2000 rows; summary covers full range.' : ''}`);
+    row.style.borderLeft=`3px solid ${comparisonColors[index]}`; row.style.paddingLeft='8px';
+    $('comparison-summary').append(row);
+  });
+  for (const metric of ['rtt','loss','availability']) drawComparisonChart(metric);
+  $('comparison-status').textContent = `${observationLabel(comparisonData.start)} → ${observationLabel(comparisonData.end)} · Common time axes. Lines break after 5 minutes; availability dots are individual sampled checks, never continuous uptime. No records means missing data, not downtime.`;
+}
+function drawComparisonChart(metric) {
+  const canvas=$(`compare-${metric}`),ctx=canvas.getContext('2d'),scale=window.devicePixelRatio||1;
+  const width=canvas.getBoundingClientRect().width||700,height=220,left=48,right=16,top=15,bottom=38;
+  canvas.width=Math.round(width*scale);canvas.height=height*scale;ctx.setTransform(scale,0,0,scale,0,0);
+  const bounds=timeBounds([],comparisonData), value=row=>metric==='rtt'?row.latency_ms:row.packet_loss_pct;
+  const exact=comparisonData.series.flatMap(s=>s.points.map(value)).filter(Number.isFinite);
+  const maximum=metric==='rtt'?Math.max(10,...exact)*1.2:100;
+  ctx.font='10px Segoe UI';ctx.fillStyle='#949a9f';ctx.strokeStyle='#2c3034';
+  for(let i=0;i<3;i++){const y=top+(height-top-bottom)*i/2;ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(width-right,y);ctx.stroke();ctx.fillText(fmt(maximum*(1-i/2)),4,y+3);}
+  comparisonData.series.forEach((series,index)=>{
+    ctx.strokeStyle=comparisonColors[index];ctx.fillStyle=comparisonColors[index];ctx.lineWidth=1.5;
+    for(const protocol of metric==='availability'?['icmp','tcp']:[null]){
+      let previous=null;
+      series.points.forEach(row=>{
+        const state=protocol?row[`${protocol}_check_status`]:null;
+        const sample=protocol?(state==='success'?100:state==='failure'?0:null):value(row);
+        const fraction=timeFraction(row,bounds),time=chartTime(row);
+        if(!Number.isFinite(sample)||fraction===null){previous=null;return;}
+        const x=left+(width-left-right)*fraction,y=top+(height-top-bottom)*(1-sample/maximum);
+        if(previous && !protocol && time-previous[2]<=CHART_GAP_MS){ctx.beginPath();ctx.moveTo(previous[0],previous[1]);ctx.lineTo(x,y);ctx.stroke();}
+        if(protocol==='tcp')ctx.strokeRect(x-2,y-2,4,4);else{ctx.beginPath();ctx.arc(x,y,2,0,Math.PI*2);ctx.fill();}
+        previous=[x,y,time];
+      });
+    }
+  });
+  ctx.fillStyle='#949a9f';ctx.textAlign='left';ctx.fillText(new Date(bounds[0]).toLocaleString(),left,height-9);
+  ctx.textAlign='right';ctx.fillText(new Date(bounds[1]).toLocaleString(),width-right,height-9);
+  canvas.setAttribute('aria-label',`${metric} comparison. ${comparisonData.series.map(s=>s.name).join(', ')}. ${metric==='availability'?'ICMP circles, TCP squares; 100 success, 0 failure; unknown omitted.':'See per-device summaries for values.'}`);
+}
+$('history-range').addEventListener('change', () => {
+  historyRange=$('history-range').value; historyWindow=null; rangeSummary=null; history=[];
+  render();
+  void drawHistory().catch(()=>{}); void loadComparison();
+});
+window.addEventListener('resize', renderComparison);
 let dnsBusy = false;
 async function runDNSLookup(event) {
   event.preventDefault();

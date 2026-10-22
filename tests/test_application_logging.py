@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 import app
 from application_logging import JSONFormatter, BatchContextFilter, configure_logging
 from monitoring_coordinator import Measurement, MonitoringCoordinator
+from schema_migrations import migrate_schema
 
 
 class ApplicationLoggingTests(unittest.TestCase):
@@ -145,7 +146,7 @@ class ApplicationLoggingTests(unittest.TestCase):
                 self.stream.seek(0)
                 self.stream.truncate()
                 pool, thread = Mock(), Mock()
-                with patch.dict('os.environ', {'NETSCOPE_DB': str(Path(directory)/'test.db')}), patch('application_logging.configure_logging'), patch('flask.Flask.logger', self.logger), patch('flask.Flask.run'), patch('monitoring_coordinator.MonitoringCoordinator', return_value=pool), patch('threading.Thread', return_value=thread), patch('schema_migrations.migrate_schema', side_effect=sqlite3.DatabaseError('secret') if failure else None, return_value=False):
+                with patch.dict('os.environ', {'NETSCOPE_DB': str(Path(directory)/'test.db')}), patch('application_logging.configure_logging'), patch('flask.Flask.logger', self.logger), patch('flask.Flask.run'), patch('monitoring_coordinator.MonitoringCoordinator', return_value=pool), patch('threading.Thread', return_value=thread), patch('schema_migrations.migrate_schema', side_effect=sqlite3.DatabaseError('secret') if failure else migrate_schema):
                     if failure:
                         with self.assertRaises(sqlite3.DatabaseError):
                             runpy.run_path(str(app.BASE/'app.py'), run_name='__main__')

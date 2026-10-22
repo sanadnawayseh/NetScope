@@ -9,7 +9,7 @@ function dashboard() {
   const pendingInitial = [];
   const timers = new Map(); let timerId = 0;
   function node() {
-    return {children: [], drawCalls: [], attributes: {}, listeners: {}, scrolls: [], focuses: [], textContent: '', className: '', append(...items) {this.children.push(...items);},
+    return {children: [], drawCalls: [], attributes: {}, listeners: {}, scrolls: [], focuses: [], style: {}, textContent: '', className: '', append(...items) {this.children.push(...items);},
       replaceChildren(...items) {this.children = items;}, setAttribute(name,value) {this.attributes[name]=value;}, addEventListener(event, handler) {this.listeners[event]=handler;},
       scrollIntoView(options) {this.scrolls.push(options);}, focus(options) {this.focuses.push(options);},
       getBoundingClientRect() {return {width: 700};},
@@ -96,6 +96,79 @@ function historyButton(nodes, index) {
 function seedDevices(context) {
   vm.runInContext("devices=[{id:1,name:'Local computer',ip:'127.0.0.1',port:80,ping_ok:1,tcp_ok:0},{id:2,name:'Homer Router',ip:'192.168.1.1',port:80,ping_ok:1,tcp_ok:1}];selectedId=1;selectedId ??= devices[0]?.id ?? null;render();",context);
 }
+
+test('analytics timestamp spacing and interruption gaps use elapsed time on both charts', () => {
+  const {context,nodes}=dashboard();
+  vm.runInContext("history=[0,1,10].map(m=>({checked_at:new Date(Date.UTC(2026,9,22,12,m)).toISOString(),ping_ok:1,latency_ms:2,packet_loss_pct:0}));drawChart();",context);
+  for(const id of ['plot','loss-plot']){
+    const calls=nodes.get(id).drawCalls,points=calls.filter(c=>c[0]==='arc');
+    assert.equal(points.length,3);
+    assert.ok(Math.abs((points[1][1]-points[0][1])/(points[2][1]-points[0][1])-.1)<.001);
+    const grid=id==='plot'?4:5;
+    assert.equal(calls.filter(c=>c[0]==='lineTo').length,grid+1); // No line across the 9 minute interruption.
+  }
+  const marks=nodes.get('check-timeline').children[0].children[1].children;
+  assert.deepEqual(marks.map(m=>m.style.left),['0%','10%','100%']);
+});
+
+function analyticsFixture(ids=[1,2]){
+  const summary={record_count:2,valid_measurements:2,unknown_measurements:0,exact_rtt_count:1,missing_rtt_count:1,average_latency_ms:2,minimum_latency_ms:2,maximum_latency_ms:2,valid_loss_count:2,missing_loss_count:0,average_packet_loss_pct:50,
+    icmp:{percentage:50,successful_checks:1,valid_checks:2,excluded_checks:0},tcp:{percentage:100,successful_checks:2,valid_checks:2,excluded_checks:0}};
+  return {start:'2026-10-22T11:00:00Z',end:'2026-10-22T12:00:00Z',series:ids.map(id=>({target_id:id,name:`Device ${id}`,summary,truncated:false,points:[
+    {checked_at:'2026-10-22T11:30:00Z',ping_ok:1,latency_ms:2,packet_loss_pct:0,icmp_check_status:'success',tcp_check_status:'success'},
+    {checked_at:'2026-10-22T11:31:00Z',ping_ok:0,latency_ms:null,packet_loss_pct:100,icmp_check_status:'failure',tcp_check_status:'success'}]}))};
+}
+
+test('analytics comparison shares axes and shows independent sampled availability and summaries',async()=>{
+  const {context,nodes,text}=dashboard();
+  context.api=async()=>analyticsFixture();
+  vm.runInContext('comparisonIds=new Set([1,2]);',context);
+  await vm.runInContext('loadComparison()',context);
+  assert.equal(nodes.get('comparison-panel').hidden,false);
+  assert.match(text(nodes.get('comparison-summary')),/Device 1.*missing RTT 1.*ICMP sampled 50%.*TCP sampled 100%.*Device 2/);
+  assert.equal(nodes.get('compare-rtt').drawCalls.filter(c=>c[0]==='arc').length,2); // No invented second RTT.
+  assert.equal(nodes.get('compare-availability').drawCalls.filter(c=>c[0]==='strokeRect').length,4);
+  const points=nodes.get('compare-loss').drawCalls.filter(c=>c[0]==='arc');
+  assert.equal(points[0][1],points[2][1]);
+  assert.match(nodes.get('comparison-status').textContent,/never continuous uptime/);
+});
+
+test('analytics range changes load full-window single-device statistics and retain inspector',async()=>{
+  const {context,nodes,text}=dashboard();seedDevices(context);const calls=[];
+  context.api=async path=>{calls.push(path);return analyticsFixture([1]);};
+  nodes.get('history-range').value='6h';
+  nodes.get('history-range').listeners.change();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(calls.includes('/api/history?targets=1&range=6h'));
+  assert.match(text(nodes.get('history-stats')),/2 records.*exact RTT 1.*mean loss 50%/);
+  assert.match(nodes.get('history-label').textContent,/Local computer.*6h/);
+  assert.equal(vm.runInContext('selectedId',context),1);
+});
+
+test('analytics comparison refreshes automatically with dashboard polling',async()=>{
+  const {context,nodes,pendingInitial}=dashboard();const paths=[];
+  vm.runInContext('comparisonIds=new Set([1,2]);',context);
+  context.api=async path=>{paths.push(path);return path.startsWith('/api/history?')?analyticsFixture():[];};
+  pendingInitial[0]({ok:true,json:async()=>[{id:1,name:'One',ip:'127.0.0.1',port:80},{id:2,name:'Two',ip:'127.0.0.2',port:80}]});
+  await vm.runInContext('load()',context);
+  assert.ok(paths.includes('/api/history?targets=1,2&range=24h'));
+  assert.equal(nodes.get('comparison-devices').children.length,2);
+});
+
+test('analytics empty comparison, stale responses and invalid times remain honest',async()=>{
+  const {context,nodes,text}=dashboard();let resolve;
+  context.api=()=>new Promise(done=>{resolve=done;});
+  vm.runInContext('comparisonIds=new Set([1,2]);',context);
+  const pending=vm.runInContext('loadComparison()',context);
+  vm.runInContext('comparisonIds=new Set();',context);
+  await vm.runInContext('loadComparison()',context);
+  resolve(analyticsFixture());await pending;
+  assert.equal(nodes.get('comparison-panel').hidden,true);
+  vm.runInContext("history=[{checked_at:null,ping_ok:1,latency_ms:5},{checked_at:'bad',packet_loss_pct:100}];drawChart();",context);
+  assert.equal(nodes.get('plot').drawCalls.filter(c=>c[0]==='arc').length,0);
+  assert.equal(nodes.get('loss-plot').drawCalls.filter(c=>c[0]==='arc').length,0);
+  assert.equal(nodes.get('check-timeline').children[0].children[1].children.length,0);
+});
 
 test('manual job submits once, renders real progress, refreshes and stops terminal polling', async () => {
   const {context,nodes,timers}=dashboard();
@@ -204,7 +277,7 @@ test('empty history clears previous charts and keeps the selected device visible
 
 test('router exact RTT is drawn while localhost bounds never create an exact point', async () => {
   const {context,nodes}=dashboard(); seedDevices(context);
-  context.fetch=async path=>({ok:true,json:async()=>[{checked_at:'2026-10-14',ping_ok:1,tcp_ok:1,packet_loss_pct:0,
+  context.fetch=async path=>({ok:true,json:async()=>[{checked_at:'2026-10-14T00:00:00Z',ping_ok:1,tcp_ok:1,packet_loss_pct:0,
     latency_ms:path.includes('/2/')?4.8:null,latency_upper_bound_ms:path.includes('/1/')?1:null}]});
   nodes.get('plot')?.drawCalls.splice(0);
   await historyButton(nodes,1).onclick();

@@ -9,6 +9,15 @@
   --surface:#181b1e;
   --mono:Consolas,"SFMono-Regular",ui-monospace,monospace;
 }
+.analytics-controls { margin-top:18px; }
+select { background:#121517; color:#e0e4e7; border:1px solid #3a4045; padding:7px; border-radius:4px; font:inherit; max-width:100%; }
+select:focus-visible { outline:2px solid var(--green); outline-offset:3px; }
+.analytics-controls fieldset { border:1px solid var(--line); margin:12px 0; min-width:0; }
+.comparison-choices { display:flex; flex-wrap:wrap; gap:10px 18px; }
+.compare-choice { display:flex; align-items:center; gap:6px; }
+.compare-choice input { width:auto; }
+#comparison-panel { margin-top:14px; }
+#comparison-summary p { overflow-wrap:anywhere; }
 * {
   box-sizing:border-box;
 }
@@ -860,3 +869,7 @@ management stays compact below it. */
 @media(max-width:640px) {
   .device-toolbar { width:100%; justify-content:space-between; }
 }
+
+/* Timestamp positions preserve real elapsed gaps in the sample timeline. */
+.timeline-track { display:block; position:relative; height:31px; overflow:visible; margin:0 9px; }
+.timeline-mark { position:absolute; top:4px; width:16px; transform:translateX(-50%); }

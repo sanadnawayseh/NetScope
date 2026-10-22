@@ -21,6 +21,8 @@ from traceroute_diagnostics import TraceDiagnostics, TraceRequestError
 from monitoring_coordinator import Measurement, MonitoringCoordinator, MonitoringStopped, parse_worker_limit
 from schema_migrations import migrate_schema
 from application_logging import configure_logging
+from historical_analytics import time_window, query_history, AnalyticsLimit, POINT_LIMIT, TIME_SQL
+import time
 
 BASE = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get('NETSCOPE_DB', BASE / 'netscope.db'))
@@ -157,6 +159,8 @@ def init_db():
         conn.execute('BEGIN IMMEDIATE')
         if migrate_schema(conn):
             conn.execute('INSERT INTO targets(name, ip, port, created_at) VALUES(?,?,?,?)', ('Local computer', '127.0.0.1', 80, utc_now()))
+        # Additive performance index; no table/data or schema-version change.
+        conn.execute(f'CREATE INDEX IF NOT EXISTS idx_results_observed ON results(target_id, ({TIME_SQL}), id)')
 
 
 def parse_ping_output(output):
@@ -535,9 +539,57 @@ def delete_target(target_id):
 
 @app.get('/api/targets/<int:target_id>/history')
 def history(target_id):
+    if request.args:
+        if set(request.args) != {'range'} or len(request.args.getlist('range')) != 1:
+            return jsonify({'error': 'Provide only one range parameter'}), 400
+        try:
+            start, end = time_window(request.args['range'])
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        with get_db() as conn:
+            rows = conn.execute(f'''SELECT * FROM results WHERE target_id=?
+                AND ({TIME_SQL})>=julianday(?) AND ({TIME_SQL})<=julianday(?)
+                ORDER BY ({TIME_SQL}) DESC, id DESC LIMIT ?''', (target_id, start, end, POINT_LIMIT)).fetchall()
+        return jsonify([diagnostic_result(row) for row in reversed(rows)])
     with get_db() as conn:
         rows = history_rows(conn, target_id)
     return jsonify([diagnostic_result(row) for row in rows])
+
+
+@app.get('/api/history')
+def historical_analytics():
+    if (set(request.args) != {'targets', 'range'}
+            or any(len(request.args.getlist(key)) != 1 for key in request.args)):
+        return jsonify({'error': 'Provide targets and range once each'}), 400
+    try:
+        tokens = request.args['targets'].split(',')
+        if not 1 <= len(tokens) <= 4 or any(not re.fullmatch(r'[1-9][0-9]{0,9}', token) for token in tokens):
+            raise ValueError('Select one to four distinct device IDs')
+        ids = [int(token) for token in tokens]
+        if len(set(ids)) != len(ids):
+            raise ValueError('Select distinct device IDs')
+        start, end = time_window(request.args['range'])
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    deadline = time.monotonic() + 10
+    try:
+        with get_db() as conn:
+            conn.execute('BEGIN')
+            conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 10000)
+            series = []
+            for target_id in ids:
+                target = conn.execute('SELECT id, name FROM targets WHERE id=?', (target_id,)).fetchone()
+                if target is None:
+                    return jsonify({'error': 'Device not found'}), 404
+                series.append(dict(target_id=target_id, name=target['name'],
+                    **query_history(conn, target_id, start, end, check_states, observation_time, deadline)))
+    except AnalyticsLimit as exc:
+        return jsonify({'error': str(exc)}), 503
+    except sqlite3.OperationalError:
+        if time.monotonic() > deadline:
+            return jsonify({'error': 'History query exceeded the local analysis budget; select fewer devices or a shorter range.'}), 503
+        raise
+    return jsonify(dict(start=start, end=end, point_limit=POINT_LIMIT, series=series))
 
 
 @app.post('/api/dns')
