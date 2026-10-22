@@ -9,7 +9,6 @@ import socket
 import sqlite3
 import subprocess
 import threading
-import time
 from contextlib import contextmanager
 from functools import wraps
 from datetime import datetime, timezone
@@ -19,6 +18,9 @@ from flask import Flask, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException
 from dns_diagnostics import DNSDiagnostics, DNSRequestError, MAX_REQUEST_BYTES
 from traceroute_diagnostics import TraceDiagnostics, TraceRequestError
+from monitoring_coordinator import Measurement, MonitoringCoordinator, MonitoringStopped, parse_worker_limit
+from schema_migrations import migrate_schema
+from application_logging import configure_logging
 
 BASE = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get('NETSCOPE_DB', BASE / 'netscope.db'))
@@ -32,6 +34,7 @@ def setting(name, default, minimum, maximum):
 CHECK_INTERVAL = setting('NETSCOPE_CHECK_INTERVAL', 30, 1, 3600)
 ICMP_TIMEOUT_MS = int(setting('NETSCOPE_ICMP_TIMEOUT_MS', 1000, 100, 10000))
 TCP_TIMEOUT = setting('NETSCOPE_TCP_TIMEOUT', 1.5, 0.1, 30)
+MONITOR_WORKERS = parse_worker_limit(os.environ.get('NETSCOPE_MONITOR_WORKERS', '4'))
 NETWORK_ERROR_CODES = (errno.ENETUNREACH, errno.EHOSTUNREACH, errno.ENETDOWN, errno.ECONNRESET, errno.ECONNABORTED, 10050, 10051, 10053, 10054, 10065)
 ICMP_PROBES = 5
 PACKET_FIELDS = ('icmp_sent', 'icmp_received', 'icmp_unanswered', 'packet_loss_pct',
@@ -39,6 +42,7 @@ PACKET_FIELDS = ('icmp_sent', 'icmp_received', 'icmp_unanswered', 'packet_loss_p
 app = Flask(__name__)
 app.config.update(DEBUG=False, MAX_CONTENT_LENGTH=4096)
 lock = threading.Lock()
+coordinator = MonitoringCoordinator(MONITOR_WORKERS, batch_lock=lock, logger=app.logger)
 dns_service = DNSDiagnostics()
 ALLOWED_NETWORKS = tuple(ipaddress.ip_network(net) for net in (
     '127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'))
@@ -77,7 +81,7 @@ def response_safeguards(response):
 
 @app.errorhandler(sqlite3.Error)
 def database_unavailable(error):
-    app.logger.exception('SQLite operation failed')
+    app.logger.exception('SQLite operation failed', extra={'event': 'database_failure'})
     return jsonify({'error': 'Database unavailable. Check local storage and retry; existing data has not been reset.'}), 503
 
 
@@ -147,19 +151,11 @@ def get_db():
 def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with get_db() as conn:
-        conn.execute('PRAGMA journal_mode=WAL')
-        new_targets_table = not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='targets'").fetchone()
-        conn.execute('CREATE TABLE IF NOT EXISTS targets (id INTEGER PRIMARY KEY, name TEXT NOT NULL, ip TEXT NOT NULL, port INTEGER NOT NULL, created_at TEXT NOT NULL)')
-        conn.execute('CREATE TABLE IF NOT EXISTS results (id INTEGER PRIMARY KEY, target_id INTEGER NOT NULL REFERENCES targets(id) ON DELETE CASCADE, checked_at TEXT NOT NULL, ping_ok INTEGER NOT NULL, latency_ms REAL, tcp_ok INTEGER NOT NULL, error TEXT)')
-        # Additive, repeatable migration: preserve targets and every historical row.
-        columns = {row['name'] for row in conn.execute('PRAGMA table_info(results)')}
-        for name, kind in (('ping_error', 'TEXT'), ('tcp_error', 'TEXT'),
-                           ('latency_source', 'TEXT'), ('latency_upper_bound_ms', 'REAL'),
-                           *((name, 'INTEGER' if name in ('icmp_sent', 'icmp_received', 'icmp_unanswered', 'rtt_sample_count') else 'REAL') for name in PACKET_FIELDS)):
-            if name not in columns:
-                conn.execute(f'ALTER TABLE results ADD COLUMN {name} {kind}')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_results_target_time ON results(target_id, id DESC)')
-        if new_targets_table:
+        if conn.execute('PRAGMA journal_mode=WAL').fetchone()[0].lower() != 'wal':
+            raise sqlite3.DatabaseError('SQLite WAL mode could not be enabled')
+        # Explicit BEGIN makes SQLite DDL and user_version roll back together.
+        conn.execute('BEGIN IMMEDIATE')
+        if migrate_schema(conn):
             conn.execute('INSERT INTO targets(name, ip, port, created_at) VALUES(?,?,?,?)', ('Local computer', '127.0.0.1', 80, utc_now()))
 
 
@@ -285,10 +281,23 @@ def tcp_check(ip, port):
         return False, 'TCP check unavailable (local socket error)'
 
 
-def run_check(target):
+def collect_measurement(target):
+    """Collect only; protocol execution errors remain unknown, not offline."""
     ip = validate_ip(target['ip'])
-    measurements = ping(ip)
-    tcp_ok, tcp_error = tcp_check(ip, target['port'])
+    port = validate_port(target['port'])
+    execution_failed = False
+    try:
+        measurements = ping(ip)
+    except Exception:
+        execution_failed = True
+        app.logger.exception('ICMP execution failed', extra={'event': 'probe_failure', 'protocol': 'icmp'})
+        measurements = empty_icmp('Ping command failed unexpectedly; check unavailable')
+    try:
+        tcp_ok, tcp_error = tcp_check(ip, port)
+    except Exception:
+        execution_failed = True
+        app.logger.exception('TCP execution failed', extra={'event': 'probe_failure', 'protocol': 'tcp'})
+        tcp_ok, tcp_error = False, 'TCP check unavailable (unexpected execution error)'
     ping_error = measurements['ping_error']
     error = '; '.join(f'{label}: {message}' for label, message in
                       (('ICMP', ping_error), ('TCP', tcp_error)) if message) or None
@@ -296,11 +305,72 @@ def run_check(target):
                **measurements, tcp_ok=int(tcp_ok), tcp_error=tcp_error,
                error=error, latency_source='icmp_rtt')
     row['ping_ok'] = int(row['ping_ok'])
+    return Measurement(row, execution_failed)
+
+
+def persist_measurement(row):
+    """One short transaction on the calling thread; never hold it during probes."""
+    validate_measurement(row)
     with get_db() as conn:
         columns = ', '.join(row)
         placeholders = ', '.join('?' for _ in row)
         conn.execute(f'INSERT INTO results ({columns}) VALUES ({placeholders})', tuple(row.values()))
-    return dict(measurements, tcp_ok=tcp_ok, tcp_error=tcp_error)
+
+
+def validate_measurement(row):
+    """Reject invalid new records without rewriting legacy/unknown samples."""
+    allowed = {'target_id', 'checked_at', 'ping_ok', 'tcp_ok', 'latency_ms',
+               'latency_upper_bound_ms', 'ping_error', 'tcp_error', 'error',
+               'latency_source', *PACKET_FIELDS}
+    required = {'target_id', 'checked_at', 'ping_ok', 'tcp_ok'}
+    def invalid():
+        raise sqlite3.IntegrityError('Invalid monitoring measurement')
+    if not isinstance(row, dict) or not required <= row.keys() or row.keys() - allowed:
+        invalid()
+    if type(row['target_id']) is not int or row['target_id'] <= 0:
+        invalid()
+    if observation_time(row['checked_at']) is None:
+        invalid()
+    if any(type(row[key]) is not int or row[key] not in (0, 1) for key in ('ping_ok', 'tcp_ok')):
+        invalid()
+    for key in ('ping_error', 'tcp_error', 'error', 'latency_source'):
+        if row.get(key) is not None and not isinstance(row[key], str):
+            invalid()
+    for key in ('latency_ms', 'latency_upper_bound_ms', 'rtt_min_ms', 'rtt_max_ms', 'packet_loss_pct'):
+        value = row.get(key)
+        if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value < 0):
+            invalid()
+    if row.get('latency_upper_bound_ms') is not None:
+        if row['latency_upper_bound_ms'] <= 0 or row.get('latency_ms') is not None:
+            invalid()
+    for key in ('icmp_sent', 'icmp_received', 'icmp_unanswered', 'rtt_sample_count'):
+        value = row.get(key)
+        if value is not None and (type(value) is not int or not 0 <= value <= ICMP_PROBES):
+            invalid()
+    counts = [row.get(key) for key in ('icmp_sent', 'icmp_received', 'icmp_unanswered', 'packet_loss_pct')]
+    if any(value is not None for value in counts):
+        sent, received, unanswered, loss = counts
+        if (any(value is None for value in counts) or sent != ICMP_PROBES
+                or received + unanswered != sent or bool(row['ping_ok']) != (received > 0)
+                or not math.isclose(loss, unanswered * 100 / sent, abs_tol=0.001)):
+            invalid()
+        if row.get('rtt_sample_count') is not None and row['rtt_sample_count'] > received:
+            invalid()
+    minimum, maximum, mean = (row.get(key) for key in ('rtt_min_ms', 'rtt_max_ms', 'latency_ms'))
+    if minimum is not None and maximum is not None:
+        if minimum > maximum or (mean is not None and not minimum <= mean <= maximum):
+            invalid()
+
+
+def run_check(target):
+    """Compatible single-target wrapper, including the original return fields."""
+    measurement = collect_measurement(target)
+    persist_measurement(measurement.row)
+    row = measurement.row
+    return dict(ping_ok=bool(row['ping_ok']), latency_ms=row['latency_ms'],
+                latency_upper_bound_ms=row['latency_upper_bound_ms'],
+                ping_error=row['ping_error'], **{name: row[name] for name in PACKET_FIELDS},
+                tcp_ok=bool(row['tcp_ok']), tcp_error=row['tcp_error'])
 
 
 HISTORY_LIMIT = 60
@@ -392,30 +462,23 @@ def diagnostic_result(row):
 
 
 def check_all(report=False):
-    if not lock.acquire(blocking=False):
-        return False
-    try:
-        with get_db() as conn:
-            targets = [dict(row) for row in conn.execute('SELECT * FROM targets')]
-        failed = 0
-        for target in targets:
-            try:
-                run_check(target)
-            except Exception:
-                failed += 1
-                app.logger.exception('Check failed for target %s', target['id'])
-        return {'total': len(targets), 'completed': len(targets)-failed, 'failed': failed} if report else True
-    finally:
-        lock.release()
+    result = coordinator.run_batch(load_targets, collect_measurement, persist_measurement)
+    return result if result is False or report else True
+
+
+def load_targets():
+    with get_db() as conn:
+        return [dict(row) for row in conn.execute('SELECT * FROM targets')]
 
 
 def monitoring_loop():
-    while True:
+    while not coordinator.stop_event.is_set():
         try:
             check_all()
         except Exception:
-            app.logger.exception('Monitoring batch failed; retrying after the configured interval')
-        time.sleep(CHECK_INTERVAL)
+            app.logger.exception('Monitoring batch failed; retrying after the configured interval',
+                                 extra={'event': 'monitor_loop_failure'})
+        coordinator.stop_event.wait(CHECK_INTERVAL)
 
 
 @app.get('/')
@@ -546,7 +609,10 @@ def traceroute():
 
 @app.post('/api/check')
 def manual_check():
-    result = check_all(report=True)
+    try:
+        result = check_all(report=True)
+    except MonitoringStopped:
+        return jsonify({'error': 'Monitoring is stopping; no new checks were submitted'}), 503
     if result is False:
         return jsonify({'error': 'A monitoring cycle is already running; no duplicate checks were queued'}), 409
     if result['failed']:
@@ -554,8 +620,46 @@ def manual_check():
     return jsonify(dict(result, message='Checks completed'))
 
 
+@app.post('/api/check-jobs')
+def submit_check_job():
+    try:
+        job = coordinator.submit_job(load_targets, collect_measurement, persist_measurement)
+    except MonitoringStopped:
+        return jsonify({'error': 'Monitoring is stopping; no new checks were submitted'}), 503
+    if job is False:
+        return jsonify({'error': 'A monitoring cycle is already running; no duplicate checks were queued'}), 409
+    response = jsonify(job)
+    response.status_code = 202
+    response.headers['Location'] = '/api/check-jobs/' + job['job_id']
+    return response
+
+
+@app.get('/api/check-jobs/<job_id>')
+def check_job_status(job_id):
+    job = coordinator.job_status(job_id)
+    if job is None:
+        return jsonify({'error': 'Monitoring job not found or no longer retained'}), 404
+    return jsonify(job)
+
+
 if __name__ == '__main__':
-    init_db()
+    configure_logging(app.logger, BASE, include_server=True)
+    app.logger.info('Application starting', extra={'event': 'application_starting'})
+    try:
+        init_db()
+    except Exception:
+        app.logger.exception('Application initialization failed', extra={'event': 'startup_failure', 'phase': 'startup'})
+        coordinator.shutdown()
+        raise
     # Use one process and no Flask reloader to avoid duplicate background monitors.
-    threading.Thread(target=monitoring_loop, daemon=True).start()
-    app.run(host='127.0.0.1', port=5000, debug=False, use_reloader=False)
+    monitor_thread = threading.Thread(target=monitoring_loop, name='netscope-monitor')
+    monitor_thread.start()
+    app.logger.info('Application started', extra={'event': 'application_started', 'workers': MONITOR_WORKERS})
+    try:
+        app.run(host='127.0.0.1', port=5000, debug=False, use_reloader=False)
+    finally:
+        app.logger.info('Application stopping', extra={'event': 'application_stopping'})
+        coordinator.request_stop()
+        monitor_thread.join()
+        coordinator.shutdown()
+        app.logger.info('Application stopped', extra={'event': 'application_stopped'})

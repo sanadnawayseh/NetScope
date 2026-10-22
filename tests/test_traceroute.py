@@ -158,7 +158,7 @@ class TraceEndpointTests(unittest.TestCase):
 
     def test_endpoint_does_not_alter_monitoring_dns_or_sqlite(self):
         before=self.client.get('/api/targets').json
-        with patch.object(netscope,'trace_service',trace.TraceDiagnostics(netscope.validate_ip)),patch.object(trace.platform,'system',return_value='Windows'),patch.object(trace.subprocess,'run',return_value=subprocess.CompletedProcess([],0,ONE,'')),patch.object(netscope,'run_check') as monitor,patch.object(netscope.dns_service,'lookup') as dns:
+        with patch.object(netscope,'trace_service',trace.TraceDiagnostics(netscope.validate_ip)),patch.object(trace.platform,'system',return_value='Windows'),patch.object(trace.subprocess,'run',return_value=subprocess.CompletedProcess([],0,ONE,'')),patch.object(netscope,'collect_measurement') as monitor,patch.object(netscope.dns_service,'lookup') as dns:
             response=self.post()
         self.assertEqual(response.status_code,200);self.assertEqual(response.json['status'],'reached')
         self.assertEqual(response.headers['Cache-Control'],'no-store')

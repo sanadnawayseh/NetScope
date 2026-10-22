@@ -23,7 +23,7 @@ class AuditBoundaryTests(unittest.TestCase):
                 self.assertEqual(self.client.get(path,environ_overrides={'REMOTE_ADDR':'192.168.1.9'}).status_code,403)
 
     def test_monitoring_mutations_reject_cross_origin_before_work(self):
-        with patch.object(netscope,'run_check') as check:
+        with patch.object(netscope,'collect_measurement') as check:
             self.assertEqual(self.client.post('/api/check',headers={'Origin':'https://attacker.example'}).status_code,403)
             self.assertEqual(self.client.post('/api/targets',json={'name':'Bad origin','ip':'127.0.0.1'},headers={'Origin':'null'}).status_code,403)
             self.assertEqual(self.client.delete('/api/targets/1',headers={'Sec-Fetch-Site':'cross-site'}).status_code,403)
@@ -32,7 +32,7 @@ class AuditBoundaryTests(unittest.TestCase):
 
     def test_api_body_limit_and_safe_json_errors(self):
         self.assertEqual(self.client.post('/api/targets',json={'name':'a'*5000,'ip':'127.0.0.1'}).status_code,413)
-        with patch.object(netscope,'run_check') as check:
+        with patch.object(netscope,'collect_measurement') as check:
             self.assertEqual(self.client.post('/api/check',data='x'*5000).status_code,413)
             check.assert_not_called()
         for port in (True,False,80.5,float('inf'),[],{},'1e2','80.0'):
@@ -60,7 +60,7 @@ class AuditBoundaryTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/targets').json,[])
 
     def test_failed_cycle_is_not_reported_as_completed(self):
-        with patch.object(netscope,'run_check',side_effect=RuntimeError('failed probe')),patch.object(netscope.app.logger,'exception'):
+        with patch.object(netscope,'collect_measurement',side_effect=RuntimeError('failed probe')),patch.object(netscope.app.logger,'exception'):
             response=self.client.post('/api/check')
         self.assertEqual(response.status_code,503)
         self.assertIn('failed',response.json['error'])
@@ -146,7 +146,7 @@ class AuditProbeTests(unittest.TestCase):
             with self.subTest(value=value),self.assertRaises(ValueError): netscope.validate_ip(value)
 
     def test_unexpected_ping_exit_is_not_valid_loss_measurement(self):
-        with patch.object(netscope.subprocess,'run') as run:
+        with patch.object(netscope.platform,'system',return_value='Windows'), patch.object(netscope.subprocess,'run') as run:
             run.return_value.returncode=2
             run.return_value.stdout=windows_batch(['=1']*5)
             run.return_value.stderr='command failure'
@@ -176,7 +176,7 @@ class AuditProbeTests(unittest.TestCase):
             self.assertEqual(netscope.check_states(row)['tcp'],'unknown')
 
     def test_monitor_loop_retries_after_outer_database_error(self):
-        with patch.object(netscope,'check_all',side_effect=sqlite3.OperationalError('db busy')),patch.object(netscope.time,'sleep',side_effect=InterruptedError('stop')),patch.object(netscope.app.logger,'exception') as log:
+        with patch.object(netscope,'check_all',side_effect=sqlite3.OperationalError('db busy')),patch.object(netscope.coordinator.stop_event,'wait',side_effect=InterruptedError('stop')),patch.object(netscope.app.logger,'exception') as log:
             with self.assertRaises(InterruptedError): netscope.monitoring_loop()
             log.assert_called_once()
 

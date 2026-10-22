@@ -43,23 +43,35 @@ These are genuine captures from an isolated loopback-only preview using real SQL
 flowchart LR
     Browser[Local browser dashboard] --> API[Flask routes]
     API --> DB[(SQLite history)]
-    Worker[Background monitoring loop] --> Checks[ICMP ping and TCP socket checks]
-    Checks --> DB
-    API --> Manual[Manual check using the same batch lock]
-    Manual --> Checks
+    Worker[Background monitoring loop] --> Coordinator[Single active batch coordinator]
+    API --> Coordinator
+    Coordinator --> Checks[Bounded device worker pool: ICMP then TCP]
+    Checks --> Writer[Coordinator collects and writes completed results]
+    Writer --> DB
     API --> DNS[Display-only system DNS resolver]
     API --> Trace[Manual Windows tracert]
 ```
 
-`app.py` owns validation, monitoring, persistence, availability classification, and routes. `dns_diagnostics.py` and `traceroute_diagnostics.py` isolate manual diagnostics. Neither diagnostic automatically runs during monitoring or writes lookup/trace results to the monitoring database.
+`app.py` owns validation, measurement collection/persistence, availability classification, and routes. `monitoring_coordinator.py` owns the bounded executor, batch admission, completed-result collection, and shutdown. `dns_diagnostics.py` and `traceroute_diagnostics.py` isolate manual diagnostics. Neither diagnostic automatically runs during monitoring or writes lookup/trace results to the monitoring database.
 
-One daemon monitoring thread checks devices sequentially. A process-local lock prevents duplicate manual/background batches and device changes during a batch. The configured interval is a delay **after** the batch finishes, so the actual sampling period includes probe execution time. The browser refreshes device data every 10 seconds.
+A monitoring thread coordinates one batch at a time. Up to **4 devices** are checked concurrently by a `ThreadPoolExecutor` (configurable 1–16). Each device still runs five ICMP probes followed by its independent TCP check. Worker threads never use SQLite: the thread coordinating the batch writes completed measurements one at a time using short, separate transactions. The executor queues the current target snapshot; it does not queue additional monitoring batches.
+
+The original process-local batch lock covers target snapshot loading, all futures, and persistence. Competing checks return busy rather than queueing another batch; device changes remain blocked until results have settled, preventing target deletion/ID reuse races. The configured interval is a delay **after** the batch finishes, so the actual sampling period includes probe and persistence time. The browser continues polling every 10 seconds.
+
+`collect_measurement()` and `persist_measurement()` separate probes from writes. `run_check()` remains a compatible single-target collection/persistence wrapper. Completed negative network results keep their existing meanings. Unexpected protocol errors preserve the other protocol's measurement and become unknown/unavailable, excluded from the relevant availability denominator. Useful partial rows can be saved while the batch reports execution failure (HTTP 503). Whole-task failures, cancelled unstarted work, and failed database inserts do not create synthetic offline records. Persistence is attempted once per outcome; a failure is logged and counted without replaying an uncertain insert.
+
+On normal server exit or Ctrl+C, the launcher signals stop, rejects new batches, cancels queued work, allows already-started bounded probes to finish, persists available results, and joins monitoring/executor threads. It does not hold lifecycle locks while waiting. Python cannot kill a running worker thread safely; shutdown can take the remaining probe deadlines plus SQLite waits. Forced process termination can lose in-flight work. A stopped coordinator is terminal; restart the application to resume.
 
 SQLite stores targets and timestamped results, uses WAL mode and parameterized request values, and applies additive migrations for older databases. History responses and availability summaries cover the latest **60 stored rows per device**, with history returned chronologically. Older rows remain stored.
+
+Schema version 1 is tracked with SQLite `PRAGMA user_version`. Startup upgrades fresh and compatible unversioned (version 0) databases, including partially applied historical column additions, in an explicit transaction. Existing rows are preserved; only a fresh database receives the default target. Schema changes, the version update, and seeding commit together or roll back together. Unknown versions, incompatible schemas, and foreign-key violations stop initialization rather than resetting data. WAL configuration occurs before the migration transaction and is not rolled back. Downgrades and automatic repair are not supported.
+
+New measurements are validated before insertion: flags must be 0/1, timestamps timezone-aware, RTT values finite and nonnegative, and completed packet counts/loss internally consistent. Unknown measurements may retain null statistics. This application safeguard does not rewrite legacy history or add table constraints; direct SQLite writes can bypass it. Startup also verifies foreign-key enforcement and the history index definition.
 
 ```text
 netscope_starter/
 ├── app.py
+├── monitoring_coordinator.py
 ├── dns_diagnostics.py
 ├── traceroute_diagnostics.py
 ├── requirements.txt
@@ -105,6 +117,7 @@ Set environment variables before starting the application:
 | `NETSCOPE_CHECK_INTERVAL` | `30` | Seconds between completed batches; 1–3600. |
 | `NETSCOPE_ICMP_TIMEOUT_MS` | `1000` | Per-probe ICMP wait in milliseconds; 100–10000. |
 | `NETSCOPE_TCP_TIMEOUT` | `1.5` | TCP connection timeout in seconds; 0.1–30. |
+| `NETSCOPE_MONITOR_WORKERS` | `4` | Integer device-worker limit; 1–16. Use 1 for sequential fallback. |
 
 For example:
 
@@ -112,12 +125,28 @@ For example:
 $env:NETSCOPE_CHECK_INTERVAL = '30'
 $env:NETSCOPE_ICMP_TIMEOUT_MS = '1000'
 $env:NETSCOPE_TCP_TIMEOUT = '1.5'
+$env:NETSCOPE_MONITOR_WORKERS = '4'
 .\.venv\Scripts\python.exe app.py
 ```
 
-There are always five ICMP requests per monitoring cycle. The ping subprocess also has an overall deadline. Invalid timeout/interval configuration stops startup rather than silently using unsafe values.
+There are always five ICMP requests per monitoring cycle. The ping subprocess also has an overall deadline. Invalid timeout/interval/worker configuration stops startup rather than silently using unsafe values.
 
 ## Usage
+
+### Local application logs
+
+The supplied `python app.py` launcher writes JSON lines to the console and `logs/netscope.log` beside the application. Application and Werkzeug server records use the same privacy-conscious formatter. Each record includes UTC time, severity and an event type; monitoring batches also include a random batch identifier, elapsed milliseconds and result counts where applicable. Unexpected probe and database failures are errors; completed batches with execution failures are warnings. Expected network refusals/timeouts remain measurement results and do not generate per-device application errors.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `NETSCOPE_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. |
+| `NETSCOPE_LOG_DIR` | `logs` beside `app.py` | Local output directory; keep it private. |
+| `NETSCOPE_LOG_MAX_BYTES` | `1048576` | Rotation threshold in bytes; 1024–104857600. |
+| `NETSCOPE_LOG_BACKUPS` | `3` | Retained rotated files; 1–20. |
+
+Rotation retains the active file plus the configured number of numbered backups. Invalid configuration or an unwritable log directory stops startup. Logging is configured by the launcher, not by importing application modules. The formatter omits raw messages, request URLs/bodies, target names/addresses, database paths/rows, exception messages and traceback text; exceptions retain their class name. This deliberately limits debugging detail. Use event types, batch identifiers and failure phases to correlate events. Generic server/framework messages appear as `application_message`. Raising the minimum log level suppresses lower-severity lifecycle events. Default `logs/` is Git-ignored; custom output locations must be kept out of publication.
+
+### Dashboard workflow
 
 1. Start with the preloaded localhost device. Wait for the first monitoring cycle, or request a manual check.
 2. Add another device only if you own it or have explicit permission. Enter a descriptive name, a literal RFC1918/loopback IPv4 address, and the specific TCP port you want to check. Do not assume a router has an open web port.
@@ -126,7 +155,9 @@ There are always five ICMP requests per monitoring cycle. The ping subprocess al
 5. In Diagnostics, enter a public domain such as `example.com` for a manual system DNS lookup. Results depend on your actual resolver; no particular address or address family is guaranteed.
 6. For traceroute, enter an authorized private/loopback IPv4 destination, choose a hop limit, and confirm permission for that destination. Selecting a device prefills its address when no trace is active and clears prior permission; this never starts a trace automatically. A `*` means a probe received no reply within its wait, not proof of an intermediate router outage.
 
-Adding/removing devices or requesting another batch while monitoring is active can return a busy message (HTTP 409). Wait for the current batch to finish and retry. Removing a device also deletes its associated history through the existing database relationship; keep a private backup if you need those records.
+Adding/removing devices or requesting another batch while monitoring is active can return a busy message (HTTP 409). **Run checks** submits an asynchronous job and polls its status about once per second, refreshing device/history data as tasks settle. The button stays disabled while that job is tracked; its status is announced through a keyboard-accessible live region. Transient status-request failures retry without submitting another batch. Terminal states stop job polling; ordinary dashboard polling continues every 10 seconds. Submission/status requests have a 10-second browser wait, independent of the batch duration. A lost submission response may leave a running job; it is never automatically resubmitted. Disconnecting does not cancel server work or release the batch lock.
+
+The legacy `/api/check` endpoint and Python `check_all()` remain synchronous for compatibility and retain their existing response fields/status codes. Their old HTTP wait limitations still apply. Removing a device also deletes its associated history through the existing database relationship; keep a private backup if you need those records.
 
 ### Understanding the measurements
 
@@ -159,7 +190,9 @@ Requests must originate through the local dashboard boundary. JSON mutations can
 | POST | `/api/targets` | Add `{ "name": "Local test", "ip": "127.0.0.1", "port": 80 }`. |
 | DELETE | `/api/targets/<id>` | Remove a device and its history. |
 | GET | `/api/targets/<id>/history` | Up to 60 stored measurements, oldest to newest within that window. |
-| POST | `/api/check` | Run a batch if no batch is active; report completed/failed counts. |
+| POST | `/api/check` | Legacy synchronous batch; report completed/failed counts. |
+| POST | `/api/check-jobs` | Reserve the existing coordinator and return HTTP 202 plus job status and a `Location` header. No request body required. |
+| GET | `/api/check-jobs/<job_id>` | Read a retained job snapshot; HTTP 404 if unknown, evicted or lost on restart. |
 | POST | `/api/dns` | Lookup `{ "domain": "example.com" }`. |
 | POST | `/api/traceroute` | Trace `{ "ip": "127.0.0.1", "authorized": true, "max_hops": 12 }`. |
 
@@ -168,6 +201,26 @@ Read-only example in PowerShell:
 ```powershell
 Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/targets'
 ```
+
+### Manual monitoring job lifecycle
+
+An accepted submission returns HTTP 202, for example:
+
+```json
+{"job_id":"f73a1f3b36aa4d09a1fb518a882ccf11","state":"queued","total":0,"completed":0,"failed":0,"progress_percentage":0,"started_at":null,"ended_at":null,"error":null}
+```
+
+The background runner may already have changed the returned state to running or terminal before the HTTP response arrives. Poll the `Location` header, such as `/api/check-jobs/f73a1f3b36aa4d09a1fb518a882ccf11`. A settled snapshot can look like:
+
+```json
+{"job_id":"f73a1f3b36aa4d09a1fb518a882ccf11","state":"failed","total":4,"completed":3,"failed":1,"progress_percentage":100.0,"started_at":"2026-10-22T12:00:00.000+00:00","ended_at":"2026-10-22T12:00:05.000+00:00","error":"Some checks failed to execute or persist. See local logs."}
+```
+
+These examples illustrate the API contract, not monitoring data. Jobs move from queued to running, then completed, failed or cancelled. Totals become known after the target snapshot loads. Completed counts successful collection/persistence tasks, including legitimate negative network results. Failed counts execution/persistence failures and cancelled or unsubmitted tasks explicitly settled by the coordinator. Useful partial protocol results may still have been persisted for a failed task. Progress is `(completed + failed) / total × 100`, updated only after persistence returns or a task is explicitly failed/cancelled; it does not count submitted futures. An empty successful batch completes at 100%. Snapshot/startup failures can finish with unknown totals and 0% progress. Timestamps are UTC and nullable before the relevant lifecycle step.
+
+Jobs use one background coordinating thread and the existing bounded probe executor, batch lock and single-writer persistence. Automatic monitoring, legacy calls and new jobs share admission: competing submissions return 409 immediately and are never queued behind a running batch. Device mutations remain blocked until results settle. On shutdown, queued probes are cancelled, started probes finish within their existing deadlines, available results are persisted, and the job becomes terminal before coordinator shutdown returns. There is no individual cancel endpoint.
+
+Only the latest **64 accepted jobs** are retained in process memory; older terminal records are evicted when another job is accepted. Status access does not extend retention. Job state is not stored in SQLite, is not durable across restarts, and cannot be shared between server processes. The browser tracks its current job only while the page remains open. Forced process termination can lose in-flight work and status; a subsequent status request returns 404. Local request security restrictions apply to both new routes.
 
 Validation/access errors use HTTP 400/403, unsupported content uses 415, oversized bodies use 413, busy/rate-limited diagnostics use 429, and database/batch execution failures can use 503. Traceroute is Windows-only (501 elsewhere). A completed diagnostic may return HTTP 200 with an unsuccessful result and an explanatory code/status; inspect the response fields, not only HTTP status.
 
@@ -186,18 +239,39 @@ Node.js 24 is the verified frontend-test environment. There are no npm packages 
 
 Python tests cover validation, ICMP/TCP diagnostics, packet loss, RTT bounds, availability denominators, additive database compatibility, DNS/traceroute parsing and safeguards, request boundaries, database snapshots, and monitoring concurrency. Tests use disposable databases and controlled fixtures; these fixtures are not runtime monitoring data. Loopback socket tests exercise real local connections. Frontend tests use a lightweight DOM/Canvas harness to check device selection, history navigation, empty/error states, formatting, and asynchronous refresh behavior; they do not replace full browser testing.
 
-See [AUDIT.md](AUDIT.md) for the preserved technical audit and its historical verification results. Latest verification after the frontend redesign on 15 October 2026 (Windows, Python 3.10.7, Flask 3.1.3, Werkzeug 3.1.9, Node.js 24.14.1):
+See [AUDIT.md](AUDIT.md) for the preserved technical audit and its historical verification results. Latest verification after bounded monitoring on 18 October 2026 (Windows, Python 3.10.7, Flask 3.1.3, Werkzeug 3.1.9, Node.js 24.14.1):
 
 | Executed check | Result |
 | --- | --- |
-| Python unittest discovery | 102 tests passed in 11.190 seconds. |
-| Node frontend regressions | 38 passed; 0 failed, cancelled, or skipped. |
+| Python unittest discovery | 123 tests passed in 14.982 seconds. |
+| Node frontend regressions | 41 passed; 0 failed, cancelled, or skipped. |
 | JavaScript syntax check | Exit code 0. |
 | pip dependency check | No broken requirements found. |
 
-The real loopback test received all five Echo Replies and reported an RTT upper bound of 1 ms with no exact RTT value. Initial card-layout assertions were updated for sorted table rows and the selected-device inspector. Browser testing caught a missing template button and mobile overflow; both were fixed before the final successful runs. A rendered-template binding regression now complements the JavaScript DOM harness. New frontend tests cover sorting, selection, trace consent reset, empty/error table states, and correct device removal after sorting. Backend modules and `AUDIT.md` remain unchanged; no dependencies were added.
+The full suite's real loopback check received five replies and reported an RTT bound of `<1 ms` without an invented exact value. New coordinator tests use 20 simulated devices, Events/Barriers, mocked probes, and disposable databases to verify worker bounds/overlap, sequential fallback, exception isolation, single-writer persistence, repeated requests, mutation protection, actual SQLite contention, cancellation, and shutdown/admission races. Existing subprocess mocks now explicitly isolate Windows platform detection. Launcher tests verify stop/join/drain on normal return and KeyboardInterrupt; callbacks cannot deadlock by requesting a blocking shutdown of their own batch. UI assets, schema, legitimate database records, diagnostic modules, and `AUDIT.md` remain unchanged; no dependencies were added.
 
-Browser smoke checks used a separate temporary SQLite database: device creation, empty and populated history selection, sorting, the existing Run checks action, and responsive layouts at the default 1280px viewport and at 390px. The page stays within the mobile viewport; the table scrolls within its own region.
+The unchanged dashboard was manually checked with a temporary database and a self-owned loopback TCP listener: automatic monitoring, polling/history, and the Run checks button worked. Browser console errors: none. No existing private devices were probed during this smoke check.
+
+### Simulated baseline benchmark
+
+```powershell
+.\.venv\Scripts\python.exe -B tests/benchmark_monitoring.py --repeats 5
+```
+
+This compares 1 and 4 workers across the same 20-device workloads, alternating run order. Uniform probes wait 100 ms; mixed probes use sixteen 50 ms and four 300 ms waits. TCP is mocked. Collection uses the actual measurement adapter, and persistence uses the actual SQLite schema/helper in disposable databases. JSON output includes all run times, median elapsed time, persisted rows, failures, and maximum active tasks. These fixture measurements never enter the application's normal database and do not measure real network performance.
+
+Observed final benchmark on 18 October 2026 (five runs per mode/workload):
+
+| Simulated workload | 1-worker median | 4-worker median |
+| --- | ---: | ---: |
+| Uniform, 100 ms per device | 2.197870 s | 0.824157 s |
+| Mixed, 50/300 ms per device | 2.216804 s | 0.826755 s |
+
+Every run persisted 20 distinct device results with zero failures; measured maximum active tasks were 1 and 4 respectively. An exploratory short-I/O run showed only a small uniform-workload improvement, demonstrating that serialized SQLite writes can dominate very fast probes. These timings are observations on this machine, not speedup guarantees.
+
+Acceptance requires identical successful result counts, no duplicates, no worker-limit violations, and a lower four-worker median for the controlled I/O workload. There is no fixed speedup guarantee or timing assertion in ordinary unit tests. Reproduce the short-I/O/storage-bound comparison with `--uniform-ms 20 --fast-ms 10 --slow-ms 80`. Simulated waits are deliberate benchmark costs; correctness tests use explicit synchronization gates rather than arbitrary sleeps.
+
+Rollback baseline: `c3d80fe` (reviewed source/tests/docs only, excluding local SQLite files, credentials, logs, and environments). Set `NETSCOPE_MONITOR_WORKERS=1` and restart for sequential fallback. A full source rollback to that commit requires no schema reversal; preserve ignored local data and save any later source edits before restoring files.
 
 ## Security restrictions
 
@@ -213,11 +287,11 @@ Browser smoke checks used a separate temporary SQLite database: device creation,
 
 ## Known limitations
 
-- This is a local single-user portfolio application, without authentication or support for public hosting, proxies, multiple workers, or multiple independent monitor processes.
+- This is a local single-user portfolio application, without authentication or support for public hosting, proxies, multiple web-server processes, or multiple independent monitor processes. Device probe threads are supported within one process.
 - Windows is the verified platform. Linux/macOS ping branches exist but do not have equivalent platform runtime verification; traceroute requires Windows. Localized or unfamiliar ping output may be unclassifiable and display N/A.
 - ICMP can be filtered or deprioritized. A TCP result describes one port at one observation time. Neither establishes complete host/network health.
 - Availability/history displays use the latest 60 stored records, not all-time availability. Older/unknown records can reduce the valid sample count. There is no retention policy; the database grows until you manage it locally.
-- Device checks are sequential. Slow probes increase sampling intervals, and a busy batch temporarily blocks device mutations. Process-local locks and quotas are not distributed coordination.
+- Device concurrency is bounded, not an exact polling-frequency guarantee. Slow probes, conservative stale thresholds, and serialized SQLite writes can dominate timings. A busy batch temporarily blocks device mutations. Locks and quotas are process-local; pending results are not crash-durable, and failed inserts are not automatically retried.
 - The system DNS resolver can use OS caches, hosts configuration, and configured DNS servers. Results are not authoritative DNS record inspection. The OS resolver cannot be safely cancelled; a permanently stalled lookup may require restarting NetScope. Name resolution can send queries to your configured resolver; filtering answers does not prevent the DNS query itself.
 - Traceroute responses depend on routing and ICMP policy. Missing hops do not establish outages, and consent is a user assertion rather than proof of ownership.
 - Legacy process-duration measurements remain stored but are not presented as exact ICMP RTT. Bound-only replies and unavailable measurements intentionally leave gaps in exact latency charts.

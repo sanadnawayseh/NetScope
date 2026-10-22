@@ -326,7 +326,47 @@ $('form').addEventListener('submit', async e => {
   try { const created = await api('/api/targets', {method:'POST', body:JSON.stringify(Object.fromEntries(new FormData(e.target)))}); selectedId = created.id; e.target.reset(); $('message').textContent = 'Device added. Run checks now or wait for the next monitoring cycle.'; await load(true); if (devices.some(t => t.id === created.id) && selectedId !== created.id) { selectedId = created.id; render(); await drawHistory(); } }
   catch (e) { $('message').textContent = e.message; } finally { button.disabled = false; }
 });
-$('check').addEventListener('click', async () => { const b = $('check'); b.disabled = true; b.textContent = 'Checking devices…'; try { await api('/api/check', {method:'POST'}); await load(true); } catch(e) { if (e.status === 409) { $('global-error').hidden = false; $('global-error').textContent = e.message; } else failure(e); } finally { b.disabled = false; b.textContent = 'Run checks'; } });
+let manualJobId = null, manualSubmitting = false, manualPollTimer = null, manualPollBusy = false, manualProcessed = -1;
+function finishManualJob() {
+  if (manualPollTimer !== null) clearTimeout(manualPollTimer);
+  manualPollTimer = null; manualJobId = null;
+  $('check').disabled = false; $('check').textContent = 'Run checks';
+}
+async function pollManualJob() {
+  if (!manualJobId || manualPollBusy) return;
+  manualPollBusy = true;
+  try {
+    const job = await api(`/api/check-jobs/${manualJobId}`, {signal:AbortSignal.timeout(10000)});
+    const processed = job.completed + job.failed;
+    $('check-progress').textContent = `${job.state} · ${processed}/${job.total} processed · ${fmt(job.progress_percentage)}% · ${job.completed} completed · ${job.failed} failed${job.error ? ' · ' + job.error : ''}`;
+    $('check').textContent = `Checking · ${fmt(job.progress_percentage)}%`;
+    if (processed !== manualProcessed) { manualProcessed = processed; void load(true); }
+    if (['completed', 'failed', 'cancelled'].includes(job.state)) {
+      finishManualJob(); void load(true);
+    }
+  } catch (error) {
+    $('check-progress').textContent = error.status === 404 ? 'Job status is no longer available. Jobs are lost on server restart or expire from memory.' : `Progress unavailable: ${error.message}. Retrying; the server job may still be running.`;
+    if (error.status === 404 || error.status === 403) finishManualJob();
+  } finally {
+    manualPollBusy = false;
+    if (manualJobId) manualPollTimer = setTimeout(pollManualJob, 1000);
+  }
+}
+async function startManualJob() {
+  if (manualSubmitting || manualJobId) return;
+  manualSubmitting = true; $('check').disabled = true; $('check').textContent = 'Starting checks…';
+  $('check-progress').textContent = 'Submitting monitoring job…';
+  try {
+    const job = await api('/api/check-jobs', {method:'POST', signal:AbortSignal.timeout(10000)});
+    manualJobId = job.job_id; manualProcessed = -1;
+    $('check-progress').textContent = 'Monitoring job accepted. Loading progress…';
+    await pollManualJob();
+  } catch (error) {
+    $('check-progress').textContent = error.status === 409 ? error.message : `Could not confirm job submission: ${error.message}. A submitted job may still run; no automatic resubmission was made.`;
+    finishManualJob();
+  } finally { manualSubmitting = false; }
+}
+$('check').addEventListener('click', startManualJob);
 window.addEventListener('resize', drawChart);
 load(); setInterval(load, 10000);
 

@@ -46,7 +46,7 @@ class ProbeTests(unittest.TestCase):
         self.assertIn('timed out', self.windows_ping('Request timed out.', 1)[3])
         for exception, message in ((subprocess.TimeoutExpired('ping', 3), 'timed out'),
                                    (FileNotFoundError(), 'unavailable')):
-            with self.subTest(exception=exception), patch.object(netscope.subprocess, 'run', side_effect=exception):
+            with self.subTest(exception=exception), patch.object(netscope.platform, 'system', return_value='Windows'), patch.object(netscope.subprocess, 'run', side_effect=exception):
                 batch = netscope.ping('127.0.0.1')
                 ok, latency, upper, error = (batch['ping_ok'], batch['latency_ms'], batch['latency_upper_bound_ms'], batch['ping_error'])
                 self.assertFalse(ok)

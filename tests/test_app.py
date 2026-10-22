@@ -9,12 +9,16 @@ import app as netscope
 class ApplicationTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
+        self.previous_coordinator = netscope.coordinator
+        netscope.coordinator = netscope.MonitoringCoordinator(netscope.MONITOR_WORKERS, batch_lock=netscope.lock, logger=netscope.app.logger)
         self.previous = netscope.DB_PATH
         netscope.DB_PATH = Path(self.directory.name) / 'test.db'
         netscope.init_db()
         self.client = netscope.app.test_client()
 
     def tearDown(self):
+        netscope.coordinator.shutdown()
+        netscope.coordinator = self.previous_coordinator
         netscope.DB_PATH = self.previous
         self.directory.cleanup()
 

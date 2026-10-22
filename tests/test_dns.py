@@ -131,7 +131,7 @@ class DNSEndpointTests(unittest.TestCase):
 
     def test_endpoint_returns_results_without_changing_sqlite_or_monitoring(self):
         before=self.client.get('/api/targets').json
-        with patch.object(netscope,'dns_service',dns.DNSDiagnostics()),patch.object(dns.socket,'getaddrinfo',return_value=[answer('8.8.8.8')]),patch.object(netscope,'run_check') as monitor:
+        with patch.object(netscope,'dns_service',dns.DNSDiagnostics()),patch.object(dns.socket,'getaddrinfo',return_value=[answer('8.8.8.8')]),patch.object(netscope,'collect_measurement') as monitor:
             response=self.post()
         self.assertEqual(response.status_code,200);self.assertTrue(response.json['ok'])
         self.assertEqual(response.headers['Cache-Control'],'no-store')

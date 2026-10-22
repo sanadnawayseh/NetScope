@@ -7,6 +7,7 @@ function dashboard() {
   const nodes = new Map();
   const requests = [];
   const pendingInitial = [];
+  const timers = new Map(); let timerId = 0;
   function node() {
     return {children: [], drawCalls: [], attributes: {}, listeners: {}, scrolls: [], focuses: [], textContent: '', className: '', append(...items) {this.children.push(...items);},
       replaceChildren(...items) {this.children = items;}, setAttribute(name,value) {this.attributes[name]=value;}, addEventListener(event, handler) {this.listeners[event]=handler;},
@@ -17,10 +18,11 @@ function dashboard() {
   const context = vm.createContext({document: {
     getElementById(id) {if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id);},
     createElement: node}, window: {addEventListener() {}, devicePixelRatio:1, matchMedia() {return {matches:false};}},
-    fetch: path => {requests.push(path); return new Promise(resolve => pendingInitial.push(resolve));}, AbortSignal, setInterval() {}, console});
+    fetch: path => {requests.push(path); return new Promise(resolve => pendingInitial.push(resolve));}, AbortSignal, setInterval() {},
+    setTimeout(callback) {timers.set(++timerId, callback); return timerId;}, clearTimeout(id) {timers.delete(id);}, console});
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname, '../static/app.js'), 'utf8'), context);
   const text = n => [n.textContent, ...n.children.map(text)].join(' ');
-  return {context, nodes, text, requests, pendingInitial};
+  return {context, nodes, text, requests, pendingInitial, timers};
 }
 
 test('TCP timeout is explicitly TCP and ICMP displays actual RTT', () => {
@@ -94,6 +96,78 @@ function historyButton(nodes, index) {
 function seedDevices(context) {
   vm.runInContext("devices=[{id:1,name:'Local computer',ip:'127.0.0.1',port:80,ping_ok:1,tcp_ok:0},{id:2,name:'Homer Router',ip:'192.168.1.1',port:80,ping_ok:1,tcp_ok:1}];selectedId=1;selectedId ??= devices[0]?.id ?? null;render();",context);
 }
+
+test('manual job submits once, renders real progress, refreshes and stops terminal polling', async () => {
+  const {context,nodes,timers}=dashboard();
+  const calls=[];let refreshes=0;
+  context.load=async()=>{refreshes++;};
+  const states=[{state:'running',total:2,completed:0,failed:0,progress_percentage:0},
+    {state:'running',total:2,completed:1,failed:0,progress_percentage:50},
+    {state:'completed',total:2,completed:2,failed:0,progress_percentage:100}];
+  context.api=async(path)=>{calls.push(path);return path==='/api/check-jobs'?{job_id:'one'}:states.shift();};
+  const submit=nodes.get('check').listeners.click();
+  await nodes.get('check').listeners.click();
+  await submit;
+  assert.equal(calls.filter(path=>path==='/api/check-jobs').length,1);
+  assert.equal(nodes.get('check').disabled,true);
+  assert.match(nodes.get('check-progress').textContent,/0\/2 processed/);
+  async function tick(){const [id,callback]=timers.entries().next().value;timers.delete(id);await callback();}
+  await tick();
+  assert.match(nodes.get('check-progress').textContent,/1\/2 processed · 50%/);
+  assert.equal(nodes.get('check').textContent,'Checking · 50%');
+  await nodes.get('check').listeners.click();
+  assert.equal(calls.filter(path=>path==='/api/check-jobs').length,1);
+  await tick();
+  assert.match(nodes.get('check-progress').textContent,/completed · 2\/2 processed · 100%/);
+  assert.equal(nodes.get('check').disabled,false);
+  assert.equal(nodes.get('check').textContent,'Run checks');
+  assert.equal(timers.size,0);
+  assert.ok(refreshes>=3);
+});
+
+test('manual job busy and submission failure restore button without automatic resubmission', async () => {
+  for(const status of [409,503]){
+    const {context,nodes,timers}=dashboard();let requests=0;
+    context.api=async()=>{requests++;const error=new Error('Busy or unavailable');error.status=status;throw error;};
+    await nodes.get('check').listeners.click();
+    assert.equal(requests,1);assert.equal(nodes.get('check').disabled,false);assert.equal(timers.size,0);
+    assert.match(nodes.get('check-progress').textContent,/Busy or unavailable/);
+  }
+});
+
+test('manual job transient polling error retries without posting another job', async () => {
+  const {context,nodes,timers}=dashboard();let posts=0,reads=0;
+  context.load=async()=>{};
+  context.api=async path=>{
+    if(path==='/api/check-jobs'){posts++;return {job_id:'one'};}
+    if(++reads===1)throw new Error('network');
+    return {state:'completed',total:0,completed:0,failed:0,progress_percentage:100};
+  };
+  await nodes.get('check').listeners.click();
+  assert.match(nodes.get('check-progress').textContent,/Retrying/);
+  assert.equal(nodes.get('check').disabled,true);
+  const [id,callback]=timers.entries().next().value;timers.delete(id);await callback();
+  assert.equal(posts,1);assert.equal(timers.size,0);assert.equal(nodes.get('check').disabled,false);
+});
+
+test('manual job partial failure and cancellation show safe terminal summary and stop polling', async () => {
+  for(const state of ['failed','cancelled']){
+    const {context,nodes,timers}=dashboard();context.load=async()=>{};
+    context.api=async path=>path==='/api/check-jobs'?{job_id:'one'}:{state,total:2,completed:1,failed:1,progress_percentage:100,error:'Safe failure summary'};
+    await nodes.get('check').listeners.click();
+    assert.match(nodes.get('check-progress').textContent,/1 completed · 1 failed · Safe failure summary/);
+    assert.ok(nodes.get('check-progress').textContent.startsWith(state));
+    assert.equal(timers.size,0);assert.equal(nodes.get('check').disabled,false);
+  }
+});
+
+test('expired manual job stops polling and explains restart or retention', async () => {
+  const {context,nodes,timers}=dashboard();
+  context.api=async path=>{if(path==='/api/check-jobs')return {job_id:'old'};const error=new Error('missing');error.status=404;throw error;};
+  await nodes.get('check').listeners.click();
+  assert.match(nodes.get('check-progress').textContent,/server restart or expire/);
+  assert.equal(nodes.get('check').disabled,false);assert.equal(timers.size,0);
+});
 
 test('clicking each device history selects it, requests its records, and navigates to charts', async () => {
   const {context,nodes}=dashboard(); seedDevices(context);

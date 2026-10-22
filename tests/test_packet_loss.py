@@ -87,7 +87,7 @@ class PacketParserTests(unittest.TestCase):
         self.assertTrue(batch['ping_ok'])
 
     def test_process_deadline_does_not_invent_five_sent(self):
-        with patch.object(netscope.subprocess, 'run', side_effect=subprocess.TimeoutExpired('ping', 12, output='partial output')):
+        with patch.object(netscope.platform, 'system', return_value='Windows'), patch.object(netscope.subprocess, 'run', side_effect=subprocess.TimeoutExpired('ping', 12, output='partial output')):
             batch = netscope.ping('127.0.0.1')
         self.assertIsNone(batch['icmp_sent'])
         self.assertIsNone(batch['packet_loss_pct'])
@@ -124,6 +124,7 @@ class PacketStorageAndSchedulingTests(unittest.TestCase):
     def test_prior_diagnostic_schema_migration_is_additive(self):
         with netscope.get_db() as db:
             # Recreate precisely the previous diagnostic schema in this disposable DB.
+            db.execute('PRAGMA user_version=0')
             db.execute('DROP TABLE results')
             db.execute('CREATE TABLE results (id INTEGER PRIMARY KEY, target_id INTEGER REFERENCES targets(id) ON DELETE CASCADE, checked_at TEXT, ping_ok INTEGER, latency_ms REAL, tcp_ok INTEGER, error TEXT, ping_error TEXT, tcp_error TEXT, latency_source TEXT, latency_upper_bound_ms REAL)')
             db.execute("INSERT INTO results VALUES(7,1,'2026-10-14',1,2.5,0,'TCP: timed out',NULL,'timed out','icmp_rtt',NULL)")
@@ -144,7 +145,8 @@ class PacketStorageAndSchedulingTests(unittest.TestCase):
             entered.set()
             if not release.wait(3):
                 raise RuntimeError('Test cycle was not released')
-        with patch.object(netscope, 'run_check', side_effect=slow_check) as run:
+            return netscope.Measurement({'target_id': target['id']})
+        with patch.object(netscope, 'collect_measurement', side_effect=slow_check) as run, patch.object(netscope, 'persist_measurement'):
             worker = threading.Thread(target=netscope.check_all)
             worker.start()
             try:
@@ -168,13 +170,13 @@ class PacketStorageAndSchedulingTests(unittest.TestCase):
         def sleep(seconds):
             timeline.append(seconds)
             raise InterruptedError('Stop test loop')
-        with patch.object(netscope, 'check_all', side_effect=completed), patch.object(netscope.time, 'sleep', side_effect=sleep):
+        with patch.object(netscope, 'check_all', side_effect=completed), patch.object(netscope.coordinator.stop_event, 'wait', side_effect=sleep):
             with self.assertRaises(InterruptedError):
                 netscope.monitoring_loop()
         self.assertEqual(timeline, ['finished', netscope.CHECK_INTERVAL])
 
     def test_failed_target_does_not_leave_batch_lock_held(self):
-        with patch.object(netscope, 'run_check', side_effect=RuntimeError('probe failed')), patch.object(netscope.app.logger, 'exception') as log:
+        with patch.object(netscope, 'collect_measurement', side_effect=RuntimeError('probe failed')), patch.object(netscope.app.logger, 'exception') as log:
             self.assertTrue(netscope.check_all())
             log.assert_called_once()
         self.assertFalse(netscope.lock.locked())
