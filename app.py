@@ -14,7 +14,7 @@ from functools import wraps
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, Response
 from werkzeug.exceptions import HTTPException
 from dns_diagnostics import DNSDiagnostics, DNSRequestError, MAX_REQUEST_BYTES
 from traceroute_diagnostics import TraceDiagnostics, TraceRequestError
@@ -22,7 +22,12 @@ from monitoring_coordinator import Measurement, MonitoringCoordinator, Monitorin
 from schema_migrations import migrate_schema
 from application_logging import configure_logging
 from historical_analytics import time_window, query_history, AnalyticsLimit, POINT_LIMIT, TIME_SQL
+import advanced_analytics
+import reporting
 import time
+from incident_management import configure as configure_incidents, process_pending, CONDITIONS, acknowledge, IncidentNotFound, IncidentConflict
+from incident_notifications import recent_events, mark_read
+from network_discovery import Discovery, DiscoveryError, echo as discovery_echo, observations as discovery_observations
 
 BASE = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get('NETSCOPE_DB', BASE / 'netscope.db'))
@@ -78,6 +83,9 @@ def response_safeguards(response):
     response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
     if request.path.startswith('/api/'):
         response.headers['Cache-Control'] = 'no-store'
+    if request.endpoint=='download_report' and response.status_code==200:
+        response.headers['Cache-Control']='no-store, private'
+        response.headers['Content-Security-Policy']="sandbox; default-src 'none'; frame-ancestors 'none'"
     return response
 
 
@@ -161,6 +169,8 @@ def init_db():
             conn.execute('INSERT INTO targets(name, ip, port, created_at) VALUES(?,?,?,?)', ('Local computer', '127.0.0.1', 80, utc_now()))
         # Additive performance index; no table/data or schema-version change.
         conn.execute(f'CREATE INDEX IF NOT EXISTS idx_results_observed ON results(target_id, ({TIME_SQL}), id)')
+        configure_incidents(conn)
+    process_pending(get_db, check_states, observation_time, app.logger)
 
 
 def parse_ping_output(output):
@@ -319,6 +329,8 @@ def persist_measurement(row):
         columns = ', '.join(row)
         placeholders = ', '.join('?' for _ in row)
         conn.execute(f'INSERT INTO results ({columns}) VALUES ({placeholders})', tuple(row.values()))
+    # Separate transaction: evaluate only confirmed committed measurements.
+    process_pending(get_db, check_states, observation_time, app.logger, row['target_id'])
 
 
 def validate_measurement(row):
@@ -488,7 +500,12 @@ def monitoring_loop():
 @app.get('/')
 def index():
     return render_template('index.html', check_interval=CHECK_INTERVAL,
-                           script_version=(BASE / 'static' / 'app.js').stat().st_mtime_ns)
+                           script_version=(BASE / 'static' / 'app.js').stat().st_mtime_ns,
+                           notification_version=(BASE / 'static' / 'notifications.js').stat().st_mtime_ns,
+                           discovery_version=(BASE / 'static' / 'discovery.js').stat().st_mtime_ns,
+                           map_version=(BASE / 'static' / 'network-map.js').stat().st_mtime_ns,
+                           analytics_version=(BASE / 'static' / 'analytics.js').stat().st_mtime_ns,
+                           report_version=(BASE / 'static' / 'reports.js').stat().st_mtime_ns)
 
 
 @app.get('/api/targets')
@@ -590,6 +607,54 @@ def historical_analytics():
             return jsonify({'error': 'History query exceeded the local analysis budget; select fewer devices or a shorter range.'}), 503
         raise
     return jsonify(dict(start=start, end=end, point_limit=POINT_LIMIT, series=series))
+
+
+@app.get('/api/analytics')
+@app.get('/api/analytics/incidents')
+def advanced_history_analytics():
+    incidents_only=request.path.endswith('/incidents')
+    try:
+        ids,start,end,previous,as_of=advanced_analytics.window(request.args,require_targets=not incidents_only)
+    except ValueError as error:
+        return jsonify(error=str(error)),400
+    deadline=time.monotonic()+10
+    try:
+        with get_db() as conn:
+            conn.execute('BEGIN')
+            conn.set_progress_handler(lambda:int(time.monotonic()>deadline),10000)
+            result=advanced_analytics.analyze(conn,ids,start,end,previous,as_of,
+                check_states,observation_time,deadline,incidents_only=incidents_only)
+        return jsonify(result)
+    except LookupError:
+        return jsonify(error='Device not found'),404
+    except AnalyticsLimit as error:
+        return jsonify(error=str(error)),503
+    except sqlite3.OperationalError:
+        if time.monotonic()>deadline:
+            return jsonify(error='Analytics time budget exceeded; select fewer devices or a shorter window'),503
+        raise
+
+
+@app.get('/api/reports.<fmt>')
+def download_report(fmt):
+    if fmt not in ('csv','pdf'):return jsonify(error='Report format must be csv or pdf'),400
+    try:
+        window,content=reporting.options(request.args)
+    except ValueError as error:return jsonify(error=str(error)),400
+    try:
+        payload=reporting.generate(get_db,window,content,fmt,check_states,observation_time)
+    except LookupError:return jsonify(error='Selected monitored device not found; deleted-device reports are unavailable'),404
+    except AnalyticsLimit as error:return jsonify(error=str(error)),503
+    except reporting.ReportError as error:return jsonify(error=str(error)),error.status
+    except (OSError,ValueError):
+        app.logger.exception('Report generation failed',extra={'event':'report_failure'})
+        return jsonify(error='Report generation unavailable; see local logs'),503
+    response=Response(payload,content_type='text/csv; charset=utf-8' if fmt=='csv' else 'application/pdf')
+    response.headers['Content-Disposition']=f'attachment; filename="netscope-report.{fmt}"'
+    response.headers['Cache-Control']='no-store, private'
+    response.headers['Pragma']='no-cache'
+    response.headers['Content-Security-Policy']="sandbox; default-src 'none'; frame-ancestors 'none'"
+    return response
 
 
 @app.post('/api/dns')
@@ -694,6 +759,246 @@ def check_job_status(job_id):
     return jsonify(job)
 
 
+def incident_response(row):
+    data = dict(row)
+    try:
+        for field in ('triggering_measurements','thresholds','recovery'):
+            data[field] = json.loads(data[field]) if data[field] is not None else None
+    except (ValueError,TypeError):
+        raise sqlite3.DatabaseError('Invalid incident evidence') from None
+    return data
+
+
+@app.get('/api/incidents')
+def list_incidents():
+    allowed = {'target_id','condition','state','range','start','end','limit','before_id'}
+    if set(request.args)-allowed or any(len(request.args.getlist(key))!=1 for key in request.args):
+        return jsonify({'error':'Unsupported or repeated incident filter'}),400
+    clauses, values = [], []
+    try:
+        if 'start' in request.args or 'end' in request.args:
+            if 'range' in request.args or not {'start','end'} <= request.args.keys():
+                raise ValueError('Provide start and end together, without range')
+            start,end = (observation_time(request.args[key]) for key in ('start','end'))
+            if not start or not end or not 0 < (datetime.fromisoformat(end)-datetime.fromisoformat(start)).total_seconds() <= 30*86400:
+                raise ValueError('Incident window must be positive and at most 30 days, with timezone-aware timestamps')
+        else:
+            start,end = time_window(request.args.get('range','30d'))
+        def integer(key, default, maximum):
+            value = request.args.get(key,str(default))
+            if not re.fullmatch(r'[1-9][0-9]{0,18}',value) or not 1<=int(value)<=maximum:
+                raise ValueError('Invalid incident numeric filter')
+            return int(value)
+        limit = integer('limit',100,200)
+        if 'target_id' in request.args:
+            clauses.append('target_id=?'); values.append(integer('target_id',1,2**63-1))
+        if 'before_id' in request.args:
+            clauses.append('id<?'); values.append(integer('before_id',1,2**63-1))
+        for field,choices in (('condition',CONDITIONS),('state',('OPEN','ACKNOWLEDGED','RESOLVED','ACTIVE'))):
+            if field in request.args:
+                if request.args[field] not in choices:
+                    raise ValueError('Invalid incident condition or state')
+                if field=='state' and request.args[field]=='ACTIVE':
+                    clauses.append("state IN ('OPEN','ACKNOWLEDGED')")
+                else:
+                    clauses.append(field+'=?'); values.append(request.args[field])
+    except ValueError as exc:
+        return jsonify({'error':str(exc)}),400
+    # Include incidents whose observed lifecycle overlaps the selected window.
+    clauses.extend(['julianday(first_observed)<=julianday(?)',
+                    '(resolved_at IS NULL OR julianday(resolved_at)>=julianday(?))'])
+    values.extend([end,start,limit+1])
+    with get_db() as conn:
+        rows=conn.execute('SELECT * FROM incidents WHERE '+' AND '.join(clauses)+' ORDER BY id DESC LIMIT ?',values).fetchall()
+    return jsonify(dict(start=start,end=end,incidents=[incident_response(row) for row in rows[:limit]],
+                        next_before_id=rows[limit-1]['id'] if len(rows)>limit else None))
+
+
+@app.get('/api/incidents/<int:incident_id>')
+def incident_detail(incident_id):
+    if incident_id>2**63-1:
+        return jsonify({'error':'Incident not found'}),404
+    with get_db() as conn:
+        row=conn.execute('SELECT * FROM incidents WHERE id=?',(incident_id,)).fetchone()
+    return (jsonify(incident_response(row)) if row else (jsonify({'error':'Incident not found'}),404))
+
+
+@app.get('/api/incidents/summary')
+def incident_summary():
+    counts={condition:{'OPEN':0,'ACKNOWLEDGED':0} for condition in CONDITIONS}
+    with get_db() as conn:
+        rows=conn.execute("SELECT condition,state,COUNT(*) AS count FROM incidents WHERE state IN ('OPEN','ACKNOWLEDGED') GROUP BY condition,state").fetchall()
+    for row in rows:
+        counts[row['condition']][row['state']]=row['count']
+    opened=sum(c['OPEN'] for c in counts.values())
+    acknowledged=sum(c['ACKNOWLEDGED'] for c in counts.values())
+    return jsonify(dict(open=opened,acknowledged=acknowledged,active=opened+acknowledged,by_condition=counts))
+
+
+@app.post('/api/incidents/<int:incident_id>/acknowledge')
+def acknowledge_incident(incident_id):
+    if not request.is_json:
+        return jsonify({'error':'Send a JSON object with an optional note'}),415
+    data=request.get_json(silent=True)
+    if not isinstance(data,dict) or set(data)-{'note'}:
+        return jsonify({'error':'Provide only an optional note in a JSON object'}),400
+    note=data.get('note')
+    if note is not None and (not isinstance(note,str) or len(note)>500 or
+            any((ord(c)<32 and c not in '\n\r\t') or ord(c)==127 for c in note)):
+        return jsonify({'error':'Note must be text of at most 500 characters without control characters'}),400
+    if incident_id>2**63-1:
+        return jsonify({'error':'Incident not found'}),404
+    try:
+        row=acknowledge(get_db,incident_id,note.strip() or None if note is not None else None,app.logger)
+    except IncidentNotFound:
+        return jsonify({'error':'Incident not found'}),404
+    except IncidentConflict:
+        return jsonify({'error':'A resolved incident cannot be newly acknowledged'}),409
+    return jsonify(incident_response(row))
+
+
+@app.get('/api/notifications')
+def notification_events():
+    if set(request.args)-{'after_id','before_id','limit'} or any(len(request.args.getlist(key))!=1 for key in request.args):
+        return jsonify({'error':'Unsupported or repeated notification parameter'}),400
+    try:
+        def number(key,default,low,high):
+            value=request.args.get(key,str(default))
+            if not re.fullmatch(r'[0-9]{1,19}',value) or not low<=int(value)<=high:
+                raise ValueError('Invalid notification cursor or limit')
+            return int(value)
+        limit=number('limit',50,1,200)
+        after=number('after_id',0,0,2**63-1) if 'after_id' in request.args else None
+        before=number('before_id',0,1,2**63-1) if 'before_id' in request.args else None
+        if after is not None and before is not None:
+            raise ValueError('Use after_id or before_id, not both')
+    except ValueError as exc:
+        return jsonify({'error':str(exc)}),400
+    with get_db() as conn:
+        data=recent_events(conn,limit,after,before)
+    return jsonify(data)
+
+
+def notification_read_body():
+    if not request.is_json:
+        return None,(jsonify({'error':'Send a JSON object'}),415)
+    data=request.get_json(silent=True)
+    if not isinstance(data,dict):
+        return None,(jsonify({'error':'Expected a JSON object'}),400)
+    return data,None
+
+
+@app.post('/api/notifications/<int:event_id>/read')
+def read_notification(event_id):
+    data,error=notification_read_body()
+    if error:return error
+    if data:
+        return jsonify({'error':'Send an empty JSON object'}),400
+    if event_id>2**63-1:return jsonify({'error':'Notification not found'}),404
+    with get_db() as conn:
+        result=mark_read(conn,event_id=event_id)
+    return jsonify(result) if result is not None else (jsonify({'error':'Notification not found'}),404)
+
+
+@app.post('/api/notifications/read')
+def read_notifications():
+    data,error=notification_read_body()
+    if error:return error
+    if set(data)!={'up_to_id'} or type(data['up_to_id']) is not int or not 0<=data['up_to_id']<=2**63-1:
+        return jsonify({'error':'Provide an integer up_to_id snapshot cursor'}),400
+    with get_db() as conn:
+        result=mark_read(conn,up_to_id=data['up_to_id'])
+    return jsonify(result)
+
+
+discovery_service = Discovery(get_db, validate_ip,
+    lambda address, timeout: discovery_echo(address, timeout, parse_ping_output),
+    lock, trace_service.slot, app.logger,
+    timeout_ms=int(setting('NETSCOPE_DISCOVERY_TIMEOUT_MS', 500, 100, 1000)))
+
+
+@app.errorhandler(DiscoveryError)
+def discovery_error(error):
+    return jsonify(error=str(error)), error.status
+
+
+def discovery_body(keys):
+    if not request.is_json:
+        raise DiscoveryError('Expected a JSON object', 415)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != set(keys):
+        raise DiscoveryError('Provide exactly: ' + ', '.join(keys))
+    return data
+
+
+@app.post('/api/discovery/jobs')
+def start_discovery():
+    data = discovery_body(('cidr', 'authorized'))
+    job_id = discovery_service.submit(data['cidr'], data['authorized'])
+    return jsonify(discovery_service.status(job_id)), 202, {'Location': '/api/discovery/jobs/' + job_id}
+
+
+@app.get('/api/discovery/jobs/<job_id>')
+def discovery_job(job_id):
+    result = discovery_service.status(job_id)
+    if result is None:
+        raise DiscoveryError('Discovery job not found (jobs are process-local)', 404)
+    return jsonify(result)
+
+
+@app.post('/api/discovery/jobs/<job_id>/cancel')
+def cancel_discovery(job_id):
+    discovery_body(())
+    if not discovery_service.cancel(job_id):
+        raise DiscoveryError('Discovery job not found', 404)
+    return jsonify(discovery_service.status(job_id))
+
+
+@app.get('/api/discovery/inventory')
+@app.get('/api/discovery/observations')
+def discovered_inventory():
+    if set(request.args) - {'limit', 'before_id'} or any(len(request.args.getlist(k)) != 1 for k in request.args):
+        raise DiscoveryError('Use only limit and before_id once')
+    values = {}
+    for key, maximum in (('limit', 200), ('before_id', 2**63-1)):
+        raw = request.args.get(key)
+        if raw is not None:
+            if not re.fullmatch(r'[0-9]{1,19}', raw) or not 1 <= int(raw) <= maximum:
+                raise DiscoveryError('Invalid ' + key)
+            values[key] = int(raw)
+    with get_db() as conn:
+        return jsonify(discovery_observations(conn, values.get('limit', 50), values.get('before_id'),
+                       inventory=request.path.endswith('/inventory')))
+
+
+@app.post('/api/discovery/observations/<int:observation_id>/enroll')
+@target_mutation
+def enroll_discovery(observation_id):
+    data = discovery_body(('name', 'port'))
+    try:
+        if not isinstance(data['name'], str) or not 1 <= len(data['name'].strip()) <= 60:
+            raise ValueError('Name must be between 1 and 60 characters')
+        port = validate_port(data['port'])
+    except ValueError as error:
+        raise DiscoveryError(str(error)) from error
+    if observation_id > 2**63-1:
+        raise DiscoveryError('Observation not found', 404)
+    with get_db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute('SELECT * FROM discovery_observations WHERE id=?', (observation_id,)).fetchone()
+        if row is None:
+            raise DiscoveryError('Observation not found or expired', 404)
+        if row['classification'] != 'responding':
+            raise DiscoveryError('Only an observed responding address can be enrolled here', 409)
+        ip = validate_ip(row['address'])
+        existing = conn.execute('SELECT id FROM targets WHERE ip=? ORDER BY id LIMIT 1', (ip,)).fetchone()
+        if existing:
+            return jsonify(error='Address is already monitored', target_id=existing['id']), 409
+        result = conn.execute('INSERT INTO targets(name,ip,port,created_at) VALUES(?,?,?,?)',
+                              (data['name'].strip(), ip, port, utc_now()))
+    return jsonify(id=result.lastrowid), 201
+
+
 if __name__ == '__main__':
     configure_logging(app.logger, BASE, include_server=True)
     app.logger.info('Application starting', extra={'event': 'application_starting'})
@@ -712,6 +1017,7 @@ if __name__ == '__main__':
     finally:
         app.logger.info('Application stopping', extra={'event': 'application_stopping'})
         coordinator.request_stop()
+        discovery_service.shutdown()
         monitor_thread.join()
         coordinator.shutdown()
         app.logger.info('Application stopped', extra={'event': 'application_stopped'})

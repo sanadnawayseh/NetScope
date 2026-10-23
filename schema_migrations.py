@@ -1,7 +1,10 @@
 """Versioned, additive SQLite migrations; the caller owns the transaction."""
 import sqlite3
+from incident_management import migrate_incidents, migrate_acknowledgements
+from incident_notifications import migrate_notifications
+from network_discovery import migrate as migrate_discovery
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 5
 TARGETS = {'id': 'INTEGER', 'name': 'TEXT', 'ip': 'TEXT',
            'port': 'INTEGER', 'created_at': 'TEXT'}
 RESULTS = {'id': 'INTEGER', 'target_id': 'INTEGER', 'checked_at': 'TEXT',
@@ -25,17 +28,18 @@ def validate_table(conn, table, required, optional=None):
 
 
 def migrate_schema(conn):
-    """Upgrade v0 to v1, or validate v1. Return whether to seed a fresh DB.
+    """Upgrade v0-v4 to v5, or validate v5. Return whether to seed a fresh DB.
 
     Never commit here: schema, version and default seed form one transaction.
     Existing v0 columns may be any subset of the historical additions.
+    Version 2 adds incident/configuration tables without rebuilding measurements.
     """
     if not conn.in_transaction:
         raise sqlite3.DatabaseError('Schema migration requires an explicit transaction')
     if conn.execute('PRAGMA foreign_keys').fetchone()[0] != 1:
         raise sqlite3.DatabaseError('Schema migration requires foreign key enforcement')
     version = conn.execute('PRAGMA user_version').fetchone()[0]
-    if version not in (0, SCHEMA_VERSION):
+    if version not in (0, 1, 2, 3, 4, SCHEMA_VERSION):
         raise sqlite3.DatabaseError(f'Unsupported NetScope schema version {version}')
     objects = dict(conn.execute("SELECT name, type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"))
     fresh = not objects
@@ -66,6 +70,11 @@ def migrate_schema(conn):
             or not any(row[1] == 'idx_results_target_time' and not row[2] and not row[4]
                        for row in indexes)):
         raise sqlite3.DatabaseError('Unexpected results history index; migration stopped')
-    if version == 0:
+    migrate_incidents(conn, install=version<2, acknowledgements=version>=3)
+    if version<3:
+        migrate_acknowledgements(conn)
+    migrate_notifications(conn, install=version<4)
+    migrate_discovery(conn, install=version<5)
+    if version < SCHEMA_VERSION:
         conn.execute(f'PRAGMA user_version={SCHEMA_VERSION}')
     return fresh

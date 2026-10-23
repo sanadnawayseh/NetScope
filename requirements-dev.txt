@@ -1,0 +1,3 @@
+-r requirements.txt
+# PDF parsing assertions; not needed by the running application.
+pypdf>=6,<7

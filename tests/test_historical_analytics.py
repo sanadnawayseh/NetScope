@@ -95,7 +95,7 @@ class HistoricalAnalyticsTests(unittest.TestCase):
         self.request()
         with app.get_db() as db:
             self.assertEqual([tuple(r) for r in db.execute('SELECT * FROM results')],before)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],1)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],5)
 
     def test_invalid_values_and_query_budget(self):
         self.insert(latency_ms=-1)

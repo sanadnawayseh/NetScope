@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import app
-from schema_migrations import ADDITIONS
+from schema_migrations import ADDITIONS, SCHEMA_VERSION
 
 
 class SchemaMigrationTests(unittest.TestCase):
@@ -39,7 +39,7 @@ class SchemaMigrationTests(unittest.TestCase):
     def test_fresh_initialization_wal_foreign_keys_and_cascade(self):
         app.init_db()
         with app.get_db() as db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 1)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], SCHEMA_VERSION)
             self.assertEqual(db.execute('PRAGMA journal_mode').fetchone()[0], 'wal')
             self.assertEqual(db.execute('PRAGMA foreign_keys').fetchone()[0], 1)
             self.assertEqual(db.execute('SELECT name FROM targets').fetchone()[0], 'Local computer')
@@ -59,7 +59,7 @@ class SchemaMigrationTests(unittest.TestCase):
                     before = self.snapshot()
                     app.init_db()
                     after = self.snapshot()
-                    self.assertEqual(after[0], 1)
+                    self.assertEqual(after[0], SCHEMA_VERSION)
                     self.assertEqual(after[1], before[1])
                     self.assertEqual(after[2][0][:len(before[2][0])], before[2][0])
                     with app.get_db() as db:
@@ -78,7 +78,7 @@ class SchemaMigrationTests(unittest.TestCase):
     def test_newer_version_is_rejected_without_changes(self):
         self.legacy()
         with app.get_db() as db:
-            db.execute('PRAGMA user_version=2')
+            db.execute(f'PRAGMA user_version={SCHEMA_VERSION+1}')
         before = self.snapshot()
         with self.assertRaisesRegex(sqlite3.DatabaseError, 'Unsupported'):
             app.init_db()

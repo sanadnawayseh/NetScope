@@ -1,3 +1,4 @@
 # Direct third-party imports; other runtime modules are Python standard library.
 Flask>=3.0,<4
 Werkzeug>=3.0,<4
+reportlab>=4.4,<5

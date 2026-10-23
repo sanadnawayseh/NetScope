@@ -124,6 +124,8 @@ class PacketStorageAndSchedulingTests(unittest.TestCase):
     def test_prior_diagnostic_schema_migration_is_additive(self):
         with netscope.get_db() as db:
             # Recreate precisely the previous diagnostic schema in this disposable DB.
+            for table in ('discovery_observations','notification_events','notification_meta','incident_streaks','incident_cursors','incidents','alert_config'):
+                db.execute('DROP TABLE '+table)
             db.execute('PRAGMA user_version=0')
             db.execute('DROP TABLE results')
             db.execute('CREATE TABLE results (id INTEGER PRIMARY KEY, target_id INTEGER REFERENCES targets(id) ON DELETE CASCADE, checked_at TEXT, ping_ok INTEGER, latency_ms REAL, tcp_ok INTEGER, error TEXT, ping_error TEXT, tcp_error TEXT, latency_source TEXT, latency_upper_bound_ms REAL)')

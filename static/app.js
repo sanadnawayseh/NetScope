@@ -131,6 +131,7 @@ function render() {
 for (const key of Object.keys(sortColumns)) $('sort-' + key).addEventListener('click', () => sortDevices(key));
 async function selectHistory(id) {
   selectedId = id;
+  void loadAdvancedAnalytics();
   const selected = devices.find(t => t.id === id);
   if (selected && !traceBusy) { $('trace-ip').value = selected.ip; $('trace-authorized').checked = false; }
   history = []; historyWindow = null; rangeSummary = null; historyError = null; historyLoading = false;
@@ -149,11 +150,13 @@ function load(force = false) {
   loadPromise = (async () => {
     try {
       devices = await api('/api/targets');
+      mapTargetsFresh=true;
       if (!devices.some(t => t.id === selectedId)) { selectedId = devices[0]?.id ?? null; history = []; }
       render();
       $('connection').textContent = `● Backend connected · Refreshed ${new Date().toLocaleTimeString()}`;
       $('global-error').hidden = true;
     } catch (e) {
+      mapTargetsFresh=false;renderNetworkMap();
       $('connection').textContent = '● Backend unavailable · Results may be stale'; failure(e);
       if (!devices.length) tableEmpty('Cannot load devices. Start the local Flask server and retry.');
       return;
@@ -161,7 +164,9 @@ function load(force = false) {
     // History errors have their own visible chart states. A successful target
     // refresh is still evidence of a connected backend.
     renderComparisonChoices();
-    try { await Promise.all([drawHistory(), loadComparison()]); } catch {}
+    renderIncidentDeviceFilter();
+    try { await Promise.all([drawHistory(), loadComparison(), loadIncidents(), loadNotifications(), loadDiscoveryInventory(), loadAdvancedAnalytics()]); } catch {}
+    renderNetworkMap();await refreshMapIncidents();
   })().finally(() => { loading = false; });
   return loadPromise;
 }
@@ -283,6 +288,7 @@ function renderComparisonChoices() {
       if (input.checked && comparisonIds.size >= 4) { input.checked = false; $('comparison-status').textContent = 'Select at most four devices.'; return; }
       if (input.checked) comparisonIds.add(device.id); else comparisonIds.delete(device.id);
       void loadComparison();
+      void loadAdvancedAnalytics();
     });
     label.append(input, element('span','',device.name)); $('comparison-devices').append(label);
   }
@@ -352,8 +358,113 @@ $('history-range').addEventListener('change', () => {
   historyRange=$('history-range').value; historyWindow=null; rangeSummary=null; history=[];
   render();
   void drawHistory().catch(()=>{}); void loadComparison();
+  void loadAdvancedAnalytics();
 });
 window.addEventListener('resize', renderComparison);
+const incidentConditions = {icmp_unavailable:'ICMP unavailable',tcp_unavailable:'TCP service unavailable',packet_loss:'Excessive packet loss',high_latency:'High exact RTT'};
+let incidentRows=[],incidentRequest=0,incidentDetailId=null,incidentDetail=null,incidentDetailRequest=0,incidentAckBusy=false,incidentNoteDraft='',incidentDeviceKey='',incidentRenderedKey='';
+function incidentDeviceName(row) { return row.target_id == null ? `Removed device #${row.original_target_id}` : devices.find(d=>d.id===row.target_id)?.name || `Device #${row.target_id}`; }
+function incidentDuration(row) {
+  const seconds=row.state==='RESOLVED'?row.duration_seconds:Math.max(0,(Date.now()-Date.parse(row.first_observed))/1000);
+  const whole=Math.floor(seconds),span=whole>=86400?`${Math.floor(whole/86400)}d ${Math.floor(whole%86400/3600)}h`:whole>=3600?`${Math.floor(whole/3600)}h ${Math.floor(whole%3600/60)}m`:whole>=60?`${Math.floor(whole/60)}m ${whole%60}s`:`${whole}s`;
+  return Number.isFinite(seconds)?`${span} ${row.state==='RESOLVED'?'sampled span':'elapsed since first observation'}`:'Duration unavailable';
+}
+function incidentValues(row) {
+  const trigger=row.triggering_measurements?.trigger,config=row.thresholds;
+  return trigger && config ? `Trigger ${fmt(trigger.value)}${row.condition==='high_latency'?' ms':row.condition==='packet_loss'?'%':' (1 = failed check)'} · threshold > ${fmt(config.threshold)} · ${config.open_checks} opening / ${config.recovery_checks} recovery checks` : 'Trigger details unavailable';
+}
+function renderIncidentDeviceFilter() {
+  const key=JSON.stringify(devices.map(d=>[d.id,d.name]));
+  if(key===incidentDeviceKey)return;
+  incidentDeviceKey=key;
+  const select=$('incident-device'),value=select.value||'';
+  select.replaceChildren();const all=element('option','','All devices');all.value='';select.append(all);
+  for(const device of devices){const option=element('option','',device.name);option.value=String(device.id);select.append(option);}
+  if(value && !devices.some(d=>String(d.id)===value)){const option=element('option','',`Device #${value} (removed)`);option.value=value;select.append(option);}
+  select.value=value;
+}
+function incidentQuery() {
+  const filters={state:$('incident-state').value||'ACTIVE',range:$('incident-range').value||'30d',limit:'100'};
+  if(filters.state==='ALL')delete filters.state;
+  if($('incident-device').value)filters.target_id=$('incident-device').value;
+  if($('incident-condition').value)filters.condition=$('incident-condition').value;
+  return Object.entries(filters).map(([key,value])=>`${key}=${encodeURIComponent(value)}`).join('&');
+}
+function renderIncidentRows() {
+  const list=$('incident-timeline');list.replaceChildren();
+  const sorted=[...incidentRows].sort((a,b)=>Date.parse(b.first_observed)-Date.parse(a.first_observed)||b.id-a.id);
+  if(!sorted.length){list.append(element('li','muted','No incidents match the selected filters.'));return;}
+  for(const row of sorted){
+    const item=element('li',`incident-row incident-${row.state.toLowerCase()}`);
+    item.append(element('h3','',`${incidentDeviceName(row)} · ${incidentConditions[row.condition]||row.condition}`),element('span','mono',row.state));
+    item.append(element('p','muted',`First observed ${observationLabel(row.first_observed)} · Open confirmed ${observationLabel(row.triggering_measurements?.trigger?.observed_at)} · ${incidentDuration(row)}${row.resolved_at?' · Recovered '+observationLabel(row.resolved_at):''}${row.acknowledged_at?' · Acknowledged '+observationLabel(row.acknowledged_at):''}`));
+    item.append(element('p','muted',incidentValues(row)));
+    const button=element('button','secondary',`Details #${row.id}`);button.type='button';button.setAttribute('aria-controls','incident-detail');button.onclick=()=>loadIncidentDetail(row.id,true);
+    item.append(button);list.append(item);
+  }
+}
+async function loadIncidents() {
+  const requestId=++incidentRequest;
+  $('incident-status').textContent='Loading incidents…';
+  try{
+    const [data,summary]=await Promise.all([api('/api/incidents?'+incidentQuery()),api('/api/incidents/summary')]);
+    if(requestId!==incidentRequest)return;
+    incidentRows=data.incidents;
+    $('incident-overview').textContent=`${summary.active} active · ${summary.open} open · ${summary.acknowledged} acknowledged (all stored incidents, including removed devices)`;
+    $('incident-counts').replaceChildren();
+    for(const [condition,label] of Object.entries(incidentConditions)){
+      const counts=summary.by_condition[condition];$('incident-counts').append(element('span','',`${label}: ${counts.OPEN} open / ${counts.ACKNOWLEDGED} acknowledged`));
+    }
+    renderIncidentRows();
+    $('incident-status').textContent=`${incidentRows.length} incidents displayed · newest first by observation time${data.next_before_id?' · Newest 100 records loaded; narrow filters for older history.':''} · Refreshed ${new Date().toLocaleTimeString()}`;
+    if(incidentDetailId!==null)await loadIncidentDetail(incidentDetailId,false);
+  }catch(error){
+    if(requestId!==incidentRequest)return;
+    $('incident-status').textContent=`Incidents unavailable: ${error.message}. Previously displayed incidents may be stale; retry or wait for the next refresh.`;
+  }
+}
+function renderIncidentDetail() {
+  const panel=$('incident-detail');panel.replaceChildren();panel.hidden=false;
+  if(!incidentDetail)return;
+  const row=incidentDetail;
+  incidentRenderedKey=JSON.stringify(row);
+  panel.append(element('h3','',`Incident #${row.id} · ${incidentDeviceName(row)} · ${row.state}`),element('p','',incidentConditions[row.condition]||row.condition));
+  panel.append(element('p','muted',`First ${observationLabel(row.first_observed)} · Latest ${observationLabel(row.latest_observed)} · ${incidentDuration(row)}`),element('p','muted',incidentValues(row)));
+  if(row.resolved_at)panel.append(element('p','muted',`Verified recovery ${observationLabel(row.resolved_at)} · Resolution result #${row.resolving_result_id} · Recovery value ${fmt(row.recovery?.measurement?.value)} · Recovery threshold ${fmt(row.recovery?.thresholds?.threshold)}`));
+  panel.append(element('p','muted',`First qualifying result #${row.triggering_measurements?.first?.result_id ?? 'N/A'} · Trigger result #${row.triggering_result_id} · Latest result #${row.latest_result_id}`));
+  if(row.acknowledged_at)panel.append(element('p','muted',`Acknowledged ${observationLabel(row.acknowledged_at)}${row.operator_note?' · Note: '+row.operator_note:''}`));
+  if(row.state==='OPEN'){
+    const label=element('label','','Optional operator note (500 characters; avoid secrets)'),note=element('textarea');
+    note.id='incident-note';note.maxLength=500;note.value=incidentNoteDraft;note.rows=2;note.disabled=incidentAckBusy;
+    note.addEventListener('input',()=>{incidentNoteDraft=note.value;});label.append(note);
+    const button=element('button','',incidentAckBusy?'Acknowledging…':'Acknowledge');button.type='button';button.disabled=incidentAckBusy;button.onclick=acknowledgeSelectedIncident;
+    panel.append(label,button);
+  }
+}
+async function loadIncidentDetail(id,focus=false) {
+  if(incidentDetailId!==id){incidentNoteDraft='';incidentDetail=null;$('incident-action-status').textContent='';}
+  incidentDetailId=id;const requestId=++incidentDetailRequest;
+  if(focus){$('incident-detail').hidden=false;$('incident-detail').textContent='Loading incident details…';$('incident-detail').focus({preventScroll:true});}
+  try{
+    const row=await api(`/api/incidents/${id}`);
+    if(requestId!==incidentDetailRequest||incidentDetailId!==id)return;
+    incidentDetail=row;
+    if(focus || (JSON.stringify(row)!==incidentRenderedKey && !(row.state==='OPEN' && document.activeElement?.id==='incident-note')))renderIncidentDetail();
+  }catch(error){if(requestId===incidentDetailRequest)$('incident-detail').textContent=`Incident details unavailable: ${error.message}`;}
+}
+async function acknowledgeSelectedIncident() {
+  if(incidentAckBusy||!incidentDetail||incidentDetail.state!=='OPEN')return;
+  incidentAckBusy=true;++incidentDetailRequest;const id=incidentDetail.id;renderIncidentDetail();
+  try{
+    const row=await api(`/api/incidents/${id}/acknowledge`,{method:'POST',body:JSON.stringify({note:incidentNoteDraft})});
+    if(incidentDetailId===id){++incidentDetailRequest;incidentDetail=row;incidentNoteDraft='';renderIncidentDetail();}
+    $('incident-action-status').textContent=`Incident #${id} acknowledged. Monitoring and verified recovery continue.`;
+    await loadIncidents();
+  }catch(error){$('incident-action-status').textContent=`Acknowledgement failed: ${error.message}. Refresh details before retrying if the response was lost.`;}
+  finally{incidentAckBusy=false;renderIncidentDetail();}
+}
+for(const id of ['incident-device','incident-condition','incident-state','incident-range'])$(id).addEventListener('change',()=>{void loadIncidents();});
+$('incident-refresh').addEventListener('click',()=>loadIncidents());
 let dnsBusy = false;
 async function runDNSLookup(event) {
   event.preventDefault();
@@ -488,5 +599,5 @@ async function startManualJob() {
 }
 $('check').addEventListener('click', startManualJob);
 window.addEventListener('resize', drawChart);
-load(); setInterval(load, 10000);
+initializeNotifications(); initializeDiscovery(); initializeNetworkMap(); initializeAdvancedAnalytics(); load(); setInterval(load, 10000);
 

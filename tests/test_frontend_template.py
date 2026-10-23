@@ -26,6 +26,11 @@ class FrontendTemplateTests(unittest.TestCase):
         template = Template()
         template.feed(response.get_data(as_text=True))
         script = (Path(netscope.BASE) / 'static' / 'app.js').read_text(encoding='utf-8')
+        script += (Path(netscope.BASE) / 'static' / 'notifications.js').read_text(encoding='utf-8')
+        script += (Path(netscope.BASE) / 'static' / 'discovery.js').read_text(encoding='utf-8')
+        script += (Path(netscope.BASE) / 'static' / 'network-map.js').read_text(encoding='utf-8')
+        script += (Path(netscope.BASE) / 'static' / 'analytics.js').read_text(encoding='utf-8')
+        script += (Path(netscope.BASE) / 'static' / 'reports.js').read_text(encoding='utf-8')
         ids = set(re.findall(r"\$\('([^']+)'\)", script))
         counts = Counter(template.ids)
         for identifier in ids:
@@ -34,6 +39,10 @@ class FrontendTemplateTests(unittest.TestCase):
         self.assertFalse([key for key, count in counts.items() if count > 1])
         self.assertEqual(template.tags['check'], 'button')
         self.assertEqual(template.tags['targets'], 'tbody')
+        self.assertEqual(template.tags['incident-state'], 'select')
+        self.assertEqual(template.attributes['incident-detail']['tabindex'], '-1')
+        self.assertEqual(template.attributes['incident-status']['role'], 'status')
+        self.assertIn('href="#incidents"',response.get_data(as_text=True))
         for key in ('name', 'ip', 'icmp', 'tcp', 'rtt', 'loss', 'checked'):
             self.assertEqual(template.tags['sort-' + key], 'button')
             self.assertEqual(template.tags['sort-heading-' + key], 'th')

@@ -11,7 +11,7 @@ import re
 
 batch_id_context = ContextVar('netscope_batch_id', default=None)
 FIELDS = {'batch_id', 'elapsed_ms', 'total', 'completed', 'failed', 'workers',
-          'protocol', 'phase'}
+          'protocol', 'phase', 'incident_id', 'condition'}
 
 
 class JSONFormatter(logging.Formatter):
@@ -30,7 +30,9 @@ class JSONFormatter(logging.Formatter):
                     data[key] = value
                 elif key in ('protocol', 'phase') and value in ('icmp', 'tcp', 'load', 'submit', 'collect', 'persist', 'startup'):
                     data[key] = value
-                elif key not in ('batch_id', 'protocol', 'phase') and type(value) in (int, float):
+                elif key=='condition' and value in ('icmp_unavailable','tcp_unavailable','packet_loss','high_latency'):
+                    data[key] = value
+                elif key not in ('batch_id', 'protocol', 'phase', 'condition') and type(value) in (int, float):
                     if math.isfinite(value):
                         data[key] = value
         if record.exc_info and record.exc_info[0]:
