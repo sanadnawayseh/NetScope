@@ -4,6 +4,8 @@
 
 The preview database is ignored and is not included. Personal monitoring devices/history were not used. The remaining `.gitkeep` files retain the category structure. Capture additional images using the checklist below; do not substitute generated images or mock monitoring values.
 
+These captures predate the incident/notification dashboard, authorized discovery, Network Map, advanced analytics and report export controls. The current README identifies them as legacy views. Before release, capture those five current workflows manually from an isolated authorized setup, including permission/empty/error states where useful. No generated or mocked UI image is added as a genuine screenshot. See the [release checklist](../docs/RELEASE_CHECKLIST.md).
+
 ## Suggested genuine captures
 
 | Folder | Suggested image | What to show |

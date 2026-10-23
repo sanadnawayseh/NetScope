@@ -1,5 +1,8 @@
 # Python environments and generated files
 .venv/
+.venv*/
+venv*/
+.envdir/
 venv/
 env/
 ENV/
@@ -8,6 +11,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
 .coverage
 .coverage.*
 htmlcov/
@@ -23,6 +27,9 @@ dist/
 *.sqlite-*
 *.sqlite3
 *.sqlite3-*
+*.db-journal
+*.sqlite-journal
+*.sqlite3-journal
 
 # Local configuration, credentials, keys, and logs
 .env
@@ -40,6 +47,18 @@ id_ed25519*
 .ssh/
 *.log
 logs/
+*.log.*
+wheelhouse/
+.wheelhouse/
+
+# Generated exports and private inventories; genuine reviewed screenshots stay tracked.
+reports/
+exports/
+private-data/
+user-data/
+*.csv
+*.tsv
+*.pdf
 
 # Editors, operating systems, and temporary artifacts
 .vscode/
@@ -60,6 +79,7 @@ tmp/
 temp/
 .cache/
 node_modules/
+.npm/
 
 # Review real captures before moving them into public screenshot folders
 screenshots/raw/

@@ -1,0 +1,4 @@
+# Runtime lock plus the PDF reader used by automated tests.
+-r requirements.lock.txt
+pypdf==6.21.2
+typing_extensions==4.16.0; python_version < '3.11'
