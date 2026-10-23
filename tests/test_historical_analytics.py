@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+import json
+import math
 import unittest
 from unittest.mock import patch
 
@@ -76,6 +78,16 @@ class HistoricalAnalyticsTests(unittest.TestCase):
         self.assertEqual(series['summary']['record_count'],6)
         self.assertEqual(series['summary']['average_latency_ms'],2.5)
         self.assertEqual([p['id'] for p in series['points']],[4,5,6])
+
+    def test_large_finite_rtt_mean_remains_finite_json(self):
+        self.insert(latency_ms=1e308)
+        self.insert(latency_ms=1e308)
+        response = self.request()
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data, parse_constant=lambda value: self.fail('Nonfinite JSON: ' + value))
+        mean = data['series'][0]['summary']['average_latency_ms']
+        self.assertTrue(math.isfinite(mean))
+        self.assertEqual(mean, 1e308)
 
     def test_comparison_empty_and_missing_samples_stay_separate(self):
         self.client.post('/api/targets',json={'name':'Second','ip':'127.0.0.2'})

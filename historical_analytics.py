@@ -36,7 +36,7 @@ def query_history(conn, target_id, start, end, classify, normalize_time, deadlin
     """Summaries cover the full window; only the newest POINT_LIMIT dots return."""
     points = deque(maxlen=POINT_LIMIT if point_limit is None else point_limit)
     count = valid = invalid_times = exact_count = loss_count = 0
-    latency_sum = loss_sum = 0.0
+    latency_mean = loss_sum = 0.0
     minimum = maximum = None
     protocols = {p: dict(successful_checks=0, valid_checks=0, excluded_checks=0) for p in ('icmp', 'tcp')}
     cursor = conn.execute(f'''SELECT * FROM results WHERE target_id=?
@@ -60,7 +60,9 @@ def query_history(conn, target_id, start, end, classify, normalize_time, deadlin
         latency,loss = eligible_samples(row,states)
         if latency is not None:
             exact_count += 1
-            latency_sum += latency
+            # Eligible RTTs are nonnegative and finite; an online mean avoids
+            # overflowing their sum even when each stored value is valid.
+            latency_mean += (latency - latency_mean) / exact_count
             minimum = latency if minimum is None else min(minimum, latency)
             maximum = latency if maximum is None else max(maximum, latency)
         if loss is not None:
@@ -75,7 +77,7 @@ def query_history(conn, target_id, start, end, classify, normalize_time, deadlin
         metric['percentage'] = metric['successful_checks'] * 100 / metric['valid_checks'] if metric['valid_checks'] else None
     summary = dict(record_count=count, valid_measurements=valid, unknown_measurements=count-valid,
                    exact_rtt_count=exact_count, missing_rtt_count=count-exact_count,
-                   average_latency_ms=latency_sum/exact_count if exact_count else None,
+                   average_latency_ms=latency_mean if exact_count else None,
                    minimum_latency_ms=minimum, maximum_latency_ms=maximum,
                    valid_loss_count=loss_count, missing_loss_count=count-loss_count,
                    average_packet_loss_pct=loss_sum/loss_count if loss_count else None,
