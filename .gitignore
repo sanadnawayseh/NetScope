@@ -83,3 +83,7 @@ node_modules/
 
 # Review real captures before moving them into public screenshot folders
 screenshots/raw/
+
+# Outdated local screenshots excluded from the current portfolio preview
+/screenshots/dashboard/overview.png
+/screenshots/history/measurements.png

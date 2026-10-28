@@ -103,16 +103,43 @@ function seedDevices(context) {
   vm.runInContext("devices=[{id:1,name:'Local computer',ip:'127.0.0.1',port:80,ping_ok:1,tcp_ok:0},{id:2,name:'Homer Router',ip:'192.168.1.1',port:80,ping_ok:1,tcp_ok:1}];selectedId=1;selectedId ??= devices[0]?.id ?? null;render();",context);
 }
 
+test('in-app notifications survive reload, deduplicate repeated polls and open incident links',async()=>{
+  const data=notificationFixture();
+  for(let reload=0;reload<2;reload++){
+    const {context,nodes}=dashboard();const paths=[];
+    context.api=async(path,options)=>{
+      paths.push(path);
+      if(options?.method==='POST')return {id:1,read_at:'2026-10-29T00:00:00Z',unread_count:0};
+      if(path==='/api/incidents/1')return incidentFixture().record;
+      return data;
+    };
+    await vm.runInContext('loadNotifications()',context);
+    await vm.runInContext('loadNotifications()',context);
+    assert.equal(nodes.get('notification-list').children.length,1);
+    assert.match(nodes.get('notification-toggle').textContent,/1 unread/);
+    await vm.runInContext('openNotificationIncident(notificationRows[0])',context);
+    assert.ok(paths.includes('/api/notifications/1/read'));
+    assert.ok(paths.includes('/api/incidents/1'));
+    assert.equal(paths.some(path=>path.includes('acknowledge')),false);
+    assert.equal(nodes.get('incidents').scrolls.length,1);
+  }
+});
+
+test('older in-app events merge once and a new database stream replaces old rows',async()=>{
+  const {context,nodes}=dashboard();const event=notificationFixture().events[0];
+  context.api=async path=>path.includes('before_id=2')?notificationFixture([event]):{...notificationFixture([{...event,id:2}]),next_before_id:2};
+  await vm.runInContext('loadNotifications()',context);
+  await vm.runInContext('loadOlderNotifications()',context);
+  assert.equal(nodes.get('notification-list').children.length,2);
+  context.api=async()=>({...notificationFixture([{...event,id:3}]),stream_id:'b'.repeat(32)});
+  await vm.runInContext('loadNotifications()',context);
+  assert.equal(nodes.get('notification-list').children.length,1);
+  assert.equal(vm.runInContext('notificationRows[0].id',context),3);
+});
+
 function notificationFixture(events=null){
   events=events||[{id:1,incident_id:1,target_id:1,original_target_id:1,condition:'tcp_unavailable',event_type:'incident_opened',event_at:'2026-10-23T00:00:00Z',created_at:'2026-10-23T00:00:01Z',read_at:null}];
   return {events,unread_count:events.filter(e=>!e.read_at).length,stream_id:'a'.repeat(32),latest_id:events.at(-1)?.id||0,next_after_id:events.at(-1)?.id||0,next_before_id:null,has_more:false};
-}
-function notificationBrowser(permission='default',storage=new Map()){
-  const calls=[],prompts=[];
-  function FakeNotification(title,options){calls.push({title,options});this.close=()=>{};}
-  FakeNotification.permission=permission;
-  FakeNotification.requestPermission=async()=>{prompts.push('requested');FakeNotification.permission='granted';return 'granted';};
-  return {options:{Notification:FakeNotification,localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)}},calls,prompts,storage,FakeNotification};
 }
 
 test('notification indicator and panel render stored unread count and both event types',async()=>{
@@ -156,10 +183,8 @@ test('notification mark-read controls preserve incident lifecycle and bulk snaps
   assert.equal(posts.some(([path])=>path.includes('acknowledge')),false);
 });
 
-test('notification panel keyboard controls and unsupported desktop keep in-app working',async()=>{
+test('notification panel opens and closes with keyboard focus and empty state',async()=>{
   const {context,nodes}=dashboard();context.api=async()=>notificationFixture([]);
-  assert.equal(nodes.get('desktop-toggle').disabled,true);
-  assert.match(nodes.get('desktop-status').textContent,/unsupported/);
   vm.runInContext('setNotificationPanel(true)',context);
   await vm.runInContext('loadNotifications()',context);
   assert.equal(nodes.get('notification-toggle').attributes['aria-expanded'],'true');
@@ -168,56 +193,18 @@ test('notification panel keyboard controls and unsupported desktop keep in-app w
   assert.equal(nodes.get('notification-toggle').focuses.length,1);
 });
 
-test('desktop notification permission is requested only after explicit gesture and denial is handled',async()=>{
-  const browser=notificationBrowser(),{context,nodes}=dashboard(browser.options);
-  context.api=async()=>notificationFixture([]);
-  await vm.runInContext('loadNotifications()',context);
-  assert.equal(browser.prompts.length,0);
-  await nodes.get('desktop-toggle').listeners.click();
-  assert.equal(browser.prompts.length,1);
-  assert.equal(vm.runInContext('desktopEnabled',context),true);
-  await nodes.get('desktop-toggle').listeners.click();
-  browser.FakeNotification.permission='denied';
-  await nodes.get('desktop-toggle').listeners.click();
-  assert.equal(browser.prompts.length,1);
-  assert.equal(vm.runInContext('desktopEnabled',context),false);
-  assert.match(nodes.get('desktop-status').textContent,/not granted/);
-});
-
-test('desktop notifications deduplicate polling and reloads with persistent stream cursor',async()=>{
-  const browser=notificationBrowser('granted'),{context,nodes}=dashboard(browser.options);let data=notificationFixture();
-  context.api=async()=>data;
-  await vm.runInContext('loadNotifications()',context);
-  await nodes.get('desktop-toggle').listeners.click();
-  assert.equal(browser.calls.length,0); // Existing unread event establishes baseline.
-  data=notificationFixture([{...data.events[0],id:2,event_type:'incident_resolved'}]);
-  await vm.runInContext('loadNotifications()',context);
-  await vm.runInContext('loadNotifications()',context);
-  assert.equal(browser.calls.length,1);
-  assert.match(browser.calls[0].title,/Incident resolved/);
-  assert.match(browser.calls[0].options.tag,/-2$/);
-  const reload=dashboard(browser.options);reload.context.api=async()=>data;
-  await vm.runInContext('loadNotifications()',reload.context);
-  assert.equal(browser.calls.length,1);
-  assert.equal(browser.prompts.length,0);
-});
-
-test('notification API failures, desktop constructor errors, and storage restrictions remain safe',async()=>{
-  const browser=notificationBrowser('granted'),{context,nodes}=dashboard(browser.options);let data=notificationFixture();
-  context.api=async()=>data;
-  await vm.runInContext('loadNotifications()',context);await nodes.get('desktop-toggle').listeners.click();
-  context.Notification=function(){throw new Error('not supported on this platform');};context.Notification.permission='granted';
-  data=notificationFixture([{...data.events[0],id:2}]);
-  await vm.runInContext('loadNotifications()',context);
-  assert.match(nodes.get('desktop-status').textContent,/could not display/);
-  assert.match(nodes.get('notification-toggle').textContent,/1 unread/);
+test('notification API and read failures preserve displayed events and recover on retry',async()=>{
+  const {context,nodes}=dashboard();const data=notificationFixture();
+  context.api=async()=>data;await vm.runInContext('loadNotifications()',context);
   context.api=async()=>{throw new Error('Database unavailable');};
   await vm.runInContext('loadNotifications()',context);
   assert.match(nodes.get('notification-status').textContent,/may be stale/);
-  await vm.runInContext('readNotificationEvent(2)',context);
+  assert.equal(nodes.get('notification-list').children.length,1);
+  await vm.runInContext('readNotificationEvent(1)',context);
   assert.match(nodes.get('notification-action-status').textContent,/Could not mark/);
-  const restricted=dashboard({localStorage:{getItem(){throw new Error('blocked');},setItem(){throw new Error('blocked');}}});
-  assert.equal(vm.runInContext('desktopEnabled',restricted.context),false);
+  assert.equal(vm.runInContext('notificationReadBusy',context),false);
+  context.api=async()=>data;await vm.runInContext('loadNotifications()',context);
+  assert.match(nodes.get('notification-toggle').textContent,/1 unread/);
 });
 
 test('open notification panel refreshes read markers changed by another local client',async()=>{

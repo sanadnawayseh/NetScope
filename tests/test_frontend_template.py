@@ -42,6 +42,11 @@ class FrontendTemplateTests(unittest.TestCase):
         self.assertEqual(template.tags['incident-state'], 'select')
         self.assertEqual(template.attributes['incident-detail']['tabindex'], '-1')
         self.assertEqual(template.attributes['incident-status']['role'], 'status')
+        self.assertEqual(template.tags['notification-read-all'], 'button')
+        self.assertEqual(template.tags['notification-older'], 'button')
+        self.assertEqual(template.attributes['notification-panel']['tabindex'], '-1')
+        for obsolete in ('desktop-toggle', 'desktop-test', 'desktop-status'):
+            self.assertNotIn(obsolete, template.ids)
         self.assertIn('href="#incidents"',response.get_data(as_text=True))
         for key in ('name', 'ip', 'icmp', 'tcp', 'rtt', 'loss', 'checked'):
             self.assertEqual(template.tags['sort-' + key], 'button')

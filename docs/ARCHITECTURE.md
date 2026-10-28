@@ -89,7 +89,7 @@ Opening/recovery require consecutive valid qualifying observations. A partial un
 
 SQLite triggers create unique opened/resolved notification events inside the incident transaction. They become visible only on commit; event failures roll back incident/cursor work while the original measurement stays saved. Later writes/startup retry pending evaluation. Structured transition logs emit after commit. Acknowledgement logs an informational event but creates no alert. Notification read state is durable, idempotent and independent of incident acknowledgement. Event APIs use bounded ID pages plus global unread counts.
 
-In-app notifications poll stored events. Browser desktop alerts are explicit opt-in, gesture-permission-based, and best effort using Notification API, stream cursors/localStorage and stable tags. They require an open page; there is no service worker, closed-browser delivery or external provider. Multiple tabs/OS suppression can prevent exact-once display even though stored events are deduplicated.
+In-app notifications poll stored events with a forward cursor, merge by event ID, and display shared unread/read state and incident links. The panel loads older events on request and refreshes read markers while open. Notification records persist locally; the dashboard must be open to display updates.
 
 ## Discovery, diagnostics and map
 

@@ -1,10 +1,8 @@
 # NetScope screenshots
 
-`dashboard/overview.png` and `history/measurements.png` are actual browser captures from 15 October 2026. They show a separate disposable SQLite preview with loopback targets only, including real five-request ICMP batches and TCP checks. Exact RTT is intentionally unavailable when ping reports `<1 ms`; the blank exact-latency plot is accurate. All displayed results came through the existing backend. No measurements were seeded or edited for these images.
+No current UI screenshots are included in the portfolio preview. Earlier genuine 15 October 2026 loopback captures (`dashboard/overview.png` and `history/measurements.png`) predate the current interface and have been excluded from the current Git tree; local copies are ignored. They remain in historical commits and were visually reviewed as loopback-only, with no personal inventory shown. Their original capture provenance is documented in earlier revisions; this audit does not independently recreate that capture session.
 
-The preview database is ignored and is not included. Personal monitoring devices/history were not used. The remaining `.gitkeep` files retain the category structure. Capture additional images using the checklist below; do not substitute generated images or mock monitoring values.
-
-These captures predate the incident/notification dashboard, authorized discovery, Network Map, advanced analytics and report export controls. The current README identifies them as legacy views. Before release, capture those five current workflows manually from an isolated authorized setup, including permission/empty/error states where useful. No generated or mocked UI image is added as a genuine screenshot. See the [release checklist](../docs/RELEASE_CHECKLIST.md).
+Capture replacements from the actual application using the checklist below. Do not substitute generated images or mock monitoring values.
 
 ## Suggested genuine captures
 
