@@ -70,3 +70,19 @@ Newer Python/Node baselines, hash-verified release artifacts, automated CI, depe
 - Existing commit author name/email remain visible in Git history. No history rewriting, remote configuration or push is performed.
 - Reviewed documented Windows virtual-environment, locked install and direct `app.py` launch commands against current dependencies and source. The launcher binds loopback port 5000 with debug/reloader disabled. A fresh upstream/PyPI install, dependency vulnerability certification and current screenshot capture were not performed in this audit.
 - **GO for a clearly labeled source portfolio preview**: no critical publication blocker identified within this review. **NO-GO for claiming production readiness or complete manual acceptance.** Historical analytics, real discovery/map, actual report downloads/PDF layout and full responsive/accessibility acceptance remain pending. At the time of this audit no license had been chosen; the owner subsequently approved MIT (see LICENSE).
+
+## Latest pre-screenshot regression checkpoint — 29 October 2026
+
+At local checkpoint `5b3db02ff8d3493b3729985951cfeb7e211c4f8d`, the full Python suite passed **261 tests in 63.471 s** and the frontend suite passed **91 tests in 1090.7111 ms**. Default storage/log paths and fixtures were disposable; the normal database checksum remained unchanged. This supersedes earlier counts for the latest regression summary, not the scope of the earlier offline installation checks. Screenshot/documentation-only changes followed; no new full regression run is claimed for the README redesign.
+
+### Optional simulated benchmarks
+
+These create disposable simulated fixtures and do not run network discovery or use the normal monitoring database:
+
+```powershell
+.\.venv\Scripts\python.exe -B tests/benchmark_monitoring.py --repeats 5
+.\.venv\Scripts\python.exe -B tests/benchmark_analytics.py
+.\.venv\Scripts\python.exe -B tests/benchmark_reports.py
+```
+
+For normal development checks, use the Automated checks section above. [AUDIT.md](../AUDIT.md) is a historical source/behavior review, not current release certification.

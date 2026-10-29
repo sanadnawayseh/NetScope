@@ -2,79 +2,88 @@
 
 **Full-Stack Network Observability & Incident Management System**
 
-**Portfolio preview — local Windows application, not production-ready.** Monitoring, incident lifecycle and in-app notification checks have owner-confirmed manual passes. Full historical analytics/report downloads, discovery/map interactions, narrow layouts and accessibility acceptance remain incomplete.
+A local Windows application for monitoring network checks, investigating incidents, and exploring stored measurements.
 
-A local-first network monitoring and diagnostics platform built with Python, Flask, SQLite and vanilla JavaScript. NetScope records independent ICMP/TCP observations, explains uncertain results, and keeps monitoring data on your machine.
+![Python 3.10](https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white)
+![Flask](https://img.shields.io/badge/Flask-API-3B4148?logo=flask&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white)
+![JavaScript](https://img.shields.io/badge/JavaScript-vanilla-8A7100?logo=javascript&logoColor=white)
+[![MIT License](https://img.shields.io/badge/License-MIT-26734D)](LICENSE)
 
-Monitor only systems you own or are explicitly authorized to test. The documented deployment is a **single local process on `127.0.0.1:5000`**, not an authenticated remote service or enterprise monitoring system.
+![NetScope dashboard displaying simulated loopback monitoring data](docs/screenshots/00-readme-hero.png)
 
-## Features
+*Current application UI, captured with simulated observations in a disposable loopback-only database. All screenshots were individually privacy-reviewed; they are demonstrations, not live network measurements.*
 
-| Area | Implemented behavior |
-| --- | --- |
-| Monitoring | Five ICMP echoes and an independent TCP check per device, bounded concurrent workers, automatic scheduling, async manual jobs and progress. |
-| Data reliability | SQLite WAL, foreign keys, additive versioned migrations (schema 5), validation and persistent measurement history. |
-| History | Timestamp-based RTT/loss/check charts, 1h–30d ranges and 2–4 device comparisons. Unknown/bounded RTT remains unavailable. |
-| Incidents | Persistent ICMP/TCP unavailability, excessive loss and high exact RTT conditions; consecutive-check thresholds, acknowledgement and verified recovery. |
-| Notifications | Persistent in-app opened/resolved events, unread counts, read controls and incident links. |
-| Authorized discovery | Explicit per-scan consent, private/loopback IPv4 CIDRs, at most 32 usable hosts, bounded jobs/cancellation and separate inventory. |
-| Network Map | Interactive unconnected SVG inventory with status, freshness, filters, pan/zoom and details. Display address buckets are not verified topology. |
-| Analytics | Exact cycle RTT mean/median/p95/p99, loss distributions, separate sampled availability, preceding-window trends and incident statistics. |
-| Reports | Local on-demand CSV/PDF exports with content/date/device selection, safe spreadsheet escaping and bounded generation. |
-| Diagnostics | Manual public-domain DNS lookup and explicitly authorized Windows traceroute; no automatic enrollment from diagnostic results. |
+## Overview
 
-Full metric definitions, API contracts, retention and size limits are in the [feature/API reference](docs/REFERENCE.md).
+NetScope brings device monitoring, incident investigation, and historical reporting into one browser dashboard. It records ICMP reachability and TCP service connectivity independently, preserving failed, unknown, and bounded observations rather than hiding uncertainty. Built as a portfolio project, it demonstrates a complete path from concurrent network work through transactional persistence and API design to an interactive frontend. Data stays in a local SQLite database; no cloud account or database server is needed.
+
+## Key features
+
+- **Concurrent monitoring:** five ICMP echoes and an independent TCP check per device, with bounded workers and overlap protection.
+- **Automatically updating dashboard:** ten-second polling, sortable inventory, and asynchronous manual checks with progress feedback.
+- **Incident lifecycle:** consecutive-check thresholds, acknowledgement notes, verified recovery, and persistent in-app opened/resolved notifications with read controls.
+- **Historical analytics:** time-range charts, missing-data gaps, two-to-four-device comparisons, sampled availability, and exact RTT statistics including percentiles.
+- **Authorized discovery and map:** explicit per-scan consent, at most 32 usable private/loopback IPv4 hosts, deliberate enrollment, and an interactive inventory map without invented topology links.
+- **CSV/PDF reporting:** device/date/content selection, bounded exports, and spreadsheet-safe escaping of user-controlled text.
+
+Manual DNS and Windows traceroute tools are also implemented. See the [full feature and API reference](docs/REFERENCE.md) for behavior, definitions, and limits.
 
 ## Screenshots
 
-Current interface captures use **simulated data in a disposable demo database**, generic labels and loopback-only addresses. No personal inventory or real discovery results are shown. These images illustrate implemented UI; they do not replace the remaining manual acceptance checks. Each image passed individual privacy review and has no embedded image metadata. See the [gallery and privacy report](docs/screenshots/README.md) for provenance and limitations.
+Click a capture to view it at full size.
 
-![NetScope current dashboard with simulated loopback monitoring data](docs/screenshots/00-readme-hero.png)
+These captures use the same privacy-reviewed, simulated demo dataset as the hero. The map shows stored observations and freshness, not physical network connections. Report controls show a demo download-started state; diagnostics results and PDF page layout are not claimed as verified by these images.
 
-| Area | Current capture |
-| --- | --- |
-| Three loopback devices | [01-dashboard-overview.png](docs/screenshots/01-dashboard-overview.png) |
-| Six-hour exact RTT/loss charts, bounded-data and collection gaps, sampled availability timeline | [02-device-history.png](docs/screenshots/02-device-history.png) |
-| Two resolved incidents and one acknowledged active incident with filters | [03-incidents.png](docs/screenshots/03-incidents.png) |
-| Resolved lifecycle, acknowledgement note, trigger thresholds and verified sampled recovery | [04-incident-detail.png](docs/screenshots/04-incident-detail.png) |
-| Persistent in-app opened/resolved events, Read/Unread states and incident links | [05-notifications.png](docs/screenshots/05-notifications.png) |
-| Simulated responding/unresponsive/unknown loopback inventory | [06-discovery-inventory.png](docs/screenshots/06-discovery-inventory.png) |
-| Unconnected stored inventory, selection details, stale/unknown states and no invented links | [07-network-map.png](docs/screenshots/07-network-map.png) |
-| Mean/median/p95/p99, loss distribution, sampled availability and incident statistics | [08-analytics-overview.png](docs/screenshots/08-analytics-overview.png) |
-| Two-device RTT/loss/availability comparison and gaps | [09-device-comparison.png](docs/screenshots/09-device-comparison.png) |
-| PDF export controls and real demo-data download-started status | [10-reporting-export.png](docs/screenshots/10-reporting-export.png) |
-| Safe example.com/loopback inputs | [11-diagnostics.png](docs/screenshots/11-diagnostics.png) |
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>Monitoring history</strong><br>
+      <a href="docs/screenshots/02-device-history.png"><img src="docs/screenshots/02-device-history.png" alt="Simulated RTT, packet-loss and sampled-availability history" width="100%"></a>
+      <p>Time-based charts preserve missing and bounded measurements.</p>
+    </td>
+    <td width="50%" valign="top">
+      <strong>Incident investigation</strong><br>
+      <a href="docs/screenshots/03-incidents.png"><img src="docs/screenshots/03-incidents.png" alt="Simulated resolved and acknowledged incidents" width="100%"></a>
+      <p>Review resolved incidents alongside acknowledged active conditions.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>Network inventory map</strong><br>
+      <a href="docs/screenshots/07-network-map.png"><img src="docs/screenshots/07-network-map.png" alt="Simulated loopback inventory with stale observations and no topology edges" width="100%"></a>
+      <p>Inspect stored device details, independent checks, and stale states.</p>
+    </td>
+    <td width="50%" valign="top">
+      <strong>Report exports</strong><br>
+      <a href="docs/screenshots/10-reporting-export.png"><img src="docs/screenshots/10-reporting-export.png" alt="PDF export controls using simulated monitoring records" width="100%"></a>
+      <p>Select devices, a reporting period, and report content.</p>
+    </td>
+  </tr>
+</table>
 
-## Architecture
+Browse the [complete gallery and privacy/provenance report](docs/screenshots/README.md) for notifications, incident details, discovery inventory, statistics, comparisons, and diagnostics.
+
+## Architecture & tech stack
+
+Flask serves the APIs and dashboard. The automatic monitoring loop and manual background jobs share a bounded coordinator: workers collect measurements, then the coordinator serializes SQLite writes. Incident evaluation follows committed measurements; transition events persist transactionally. The frontend polls APIs and renders stored results.
 
 ```mermaid
 flowchart LR
-    Browser["Local browser and polling"] --> Flask["Flask validation and APIs"]
-    Flask --> Coordinator["Bounded monitoring coordinator"]
-    Coordinator --> SQLite[("SQLite WAL history and incidents")]
-    Flask --> Services["Analytics, discovery and reports"]
-    Services --> SQLite
+    UI["Browser polling"] <--> API["Flask APIs"]
+    API --> Jobs["Manual jobs"]
+    Auto["Automatic loop"] --> Pool["Bounded monitoring workers"]
+    Jobs --> Pool
+    Pool --> Writer["Serialized persistence"]
+    Writer --> DB[("SQLite WAL")]
+    API <--> DB
 ```
 
-The [architecture document](docs/ARCHITECTURE.md) maps the actual modules, threads, transactions, notification triggers and failure boundaries. Probe workers return results; a coordinating thread serializes SQLite writes. Incident evaluation follows measurement commit in a separate retryable transaction. Reports reuse analytics, and discovery has a separate pool with shared admission limits.
+**Stack:** Python, Flask/Werkzeug, SQLite, vanilla JavaScript, HTML/CSS, Canvas/SVG charts, and ReportLab PDFs. Tests use Python `unittest`, pypdf, and Node's built-in test runner. See the [architecture guide](docs/ARCHITECTURE.md) for transactions, thread ownership, and module boundaries.
 
-## Verified requirements
+## Quick start
 
-| Component | Verified baseline |
-| --- | --- |
-| OS | Windows x64; Windows `ping.exe` and `tracert.exe`. |
-| Python | CPython **3.10.7** (runtime and a fresh isolated virtual environment). |
-| Node.js | **24.14.1**, used only for frontend tests/syntax checks. No npm install is needed to run NetScope. |
-| Browser | A modern browser with JavaScript/Canvas/SVG. Manual cross-browser/mobile/assistive-technology acceptance remains pending. |
-| Database | SQLite supplied by Python; no database server. |
-
-This is the verified compatibility baseline, not a claim that other Python/Node versions or Linux/macOS were tested. Additional patched interpreter/OS versions should be verified before expanding release support. Non-Windows ping branches exist, but traceroute is Windows-only and localized command output may be unknown/unparseable.
-
-Runtime packages are Flask, Werkzeug and ReportLab plus transitive dependencies. Development adds pypdf for PDF assertions; frontend tests use Node's built-in runner. There are no runtime cloud services, graph frameworks or charting dependencies.
-
-## Windows installation
-
-Open PowerShell in the extracted/cloned project root (the directory containing `app.py`). Install the verified Python and, for development only, Node baseline first.
+Use Windows x64 with Python 3.10 installed; the verified interpreter baseline is **CPython 3.10.7**. From the cloned or extracted project root, run in PowerShell:
 
 ```powershell
 py -3.10 --version
@@ -84,90 +93,24 @@ py -3.10 -m venv .venv
 .\.venv\Scripts\python.exe app.py
 ```
 
-Activation and execution-policy changes are unnecessary. Open [http://127.0.0.1:5000](http://127.0.0.1:5000), or the matching localhost address, and use that same origin. Press Ctrl+C to stop normally. Do not use `flask run`, a reloader, multiple worker processes, a tunnel or a public bind as a substitute for this launcher.
+Open [127.0.0.1:5000](http://127.0.0.1:5000). A fresh database starts with **Local computer**, `127.0.0.1:80`; a closed TCP port can coexist with successful ICMP. Stop normally with **Ctrl+C**. No environment activation, npm install, or execution-policy change is required.
 
-The launcher configures console/rotating logs, initializes a fresh database or safely migrates a compatible existing database, starts automatic monitoring, then serves the dashboard. A new database seeds **Local computer**, `127.0.0.1`, TCP port 80. A closed port is a valid negative TCP result even when ICMP answers. Existing devices/history and intentionally empty inventories are preserved; incompatible/unknown schemas fail startup rather than reset data. Back up private data before upgrading; no downgrade/repair tool is provided.
+Run one local process using this launcher, with debug/reloader disabled. Monitor only authorized private/loopback IPv4 targets. There is **no authentication or supported remote deployment**: do not expose the server through a public bind, proxy, or tunnel. See [setup and configuration](docs/CONFIGURATION.md) before changing storage or upgrading an existing database.
 
-Exact direct/transitive versions are pinned in [runtime](requirements.lock.txt) and [development](requirements-dev.lock.txt) lock files. The existing [runtime ranges](requirements.txt) and [development ranges](requirements-dev.txt) remain maintenance inputs; use the locks for the verified snapshot. Pins are not package hashes, a vulnerability audit or verification of every supported platform. The clean-install check uses an offline wheelhouse derived from the configured installed packages; a fresh Internet/PyPI retrieval was not part of that check.
+## Testing & status
 
-## Configuration
+**Portfolio preview — not production-ready.** The latest completed regression run passed **261 Python tests and 91 frontend tests** using disposable storage (29 October 2026). Node.js **24.14.1** was verified for development checks; it is not a runtime requirement.
 
-Set supported environment variables before startup, for example:
+Owner-confirmed manual checks cover Windows startup, monitoring, restart persistence, incident opening/acknowledgement/recovery, and in-app notification controls. Full historical analytics, separately authorized real discovery/map testing, report downloads/PDF visual acceptance, and responsive/accessibility acceptance remain incomplete. Sampled availability is not continuous uptime, and ordinary history has no automatic retention. Fresh upstream dependency provenance and vulnerability certification were not established.
 
-```powershell
-$env:NETSCOPE_DB = Join-Path $PWD 'private-data\netscope.db'
-$env:NETSCOPE_MONITOR_WORKERS = '4'
-$env:NETSCOPE_CHECK_INTERVAL = '30'
-$env:NETSCOPE_INCIDENT_OPEN_CHECKS = '3'
-$env:NETSCOPE_INCIDENT_RECOVERY_CHECKS = '2'
-$env:NETSCOPE_INCIDENT_LOSS_PCT = '40'
-$env:NETSCOPE_INCIDENT_LATENCY_MS = '200'
-$env:NETSCOPE_LOG_LEVEL = 'INFO'
-.\.venv\Scripts\python.exe app.py
-```
+Use the [release checklist](docs/RELEASE_CHECKLIST.md) for exact test commands and recorded evidence, and [final acceptance](docs/FINAL_ACCEPTANCE.md) for remaining manual gates. No CI/build-success badge is claimed.
 
-[Configuration reference](docs/CONFIGURATION.md) lists every supported variable, accepted bounds, timeouts and log rotation. Invalid settings stop startup. Alert settings persist in SQLite: explicit overrides update them; removing an override retains the stored setting. `.env` is ignored for privacy but is **not automatically loaded**.
+## Documentation & license
 
-## Use NetScope
+- [Architecture](docs/ARCHITECTURE.md) — components, concurrency, and persistence.
+- [Features and API reference](docs/REFERENCE.md) — workflows, endpoints, metrics, limits, and benchmarks.
+- [Setup and configuration](docs/CONFIGURATION.md) — Windows compatibility, storage, and environment settings.
+- [Screenshot gallery](docs/screenshots/README.md) — all 12 captures and privacy review.
+- [Release checklist](docs/RELEASE_CHECKLIST.md) · [Manual acceptance](docs/FINAL_ACCEPTANCE.md) — reproducibility and verification boundaries.
 
-1. Start with loopback, then add only an authorized private/loopback IPv4 target and a deliberate TCP port. Do not assume an open web service.
-2. Read ICMP and TCP independently. Use **Run checks** for a nonblocking monitoring job; busy requests return 409. The dashboard normally refreshes every ten seconds.
-3. Select a device for history, choose a range, or select comparison checkboxes. Exact RTT charts leave gaps for `<1 ms`, failed and unknown measurements. Sampled availability is not continuous uptime.
-4. Review **Incidents**, filter timelines and acknowledge OPEN incidents when appropriate. Acknowledgement records awareness, not recovery. Stored recovery requires qualifying valid observations.
-5. Open **Notifications** for durable events/read controls. Opened/resolved events persist locally and appear when the dashboard polls; reading an event does not acknowledge or resolve its incident.
-6. Open **Network Discovery** only for an explicitly authorized, exact CIDR. Confirm consent for each scan. Discovery never starts from page loads and never automatically enrolls targets. Only a deliberate enrollment action schedules future monitoring.
-7. Use **Network Map** to inspect stored devices. No links are drawn because there is no verified link evidence. An ICMP nonreply does not prove a device is absent.
-8. Use **Analytics** and **Export Report** for bounded historical summaries or private CSV/PDF downloads. Choose a shorter window/summary content if limits are exceeded.
-9. DNS/traceroute are separate manual tools. DNS never connects to returned addresses; traceroute requires permission for the destination.
-
-## Tests and reproducibility
-
-From the project root:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.lock.txt
-.\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
-node --test --test-isolation=none tests/test_dashboard.cjs
-Get-ChildItem static\*.js | ForEach-Object { node --check $_.FullName }
-.\.venv\Scripts\python.exe -m pip check
-git diff --check
-```
-
-For a fresh temporary environment and launcher/migration check:
-
-```powershell
-.\.venv\Scripts\python.exe -B tools/verify_install.py
-```
-
-The verifier rebuilds a private wheelhouse from installed locked distributions, installs runtime then development packages into a new virtual environment with system-site-packages disabled, checks dependencies, exercises the launcher with mocked probes/HTTP serving against fresh and legacy temporary databases, then runs all Python tests. It performs no discovery and never selects the real user database. It verifies offline package installation/isolation, not upstream artifact provenance. Detailed scope and manual checks are in the [release checklist](docs/RELEASE_CHECKLIST.md).
-
-Tests use simulated observations and disposable databases; original socket/ICMP regression tests exercise self-owned loopback only. Frontend tests simulate DOM/Canvas/SVG and downloads; they do not replace real browser/OS acceptance. Benchmarks are optional, simulated and temporary:
-
-```powershell
-.\.venv\Scripts\python.exe -B tests/benchmark_monitoring.py --repeats 5
-.\.venv\Scripts\python.exe -B tests/benchmark_analytics.py
-.\.venv\Scripts\python.exe -B tests/benchmark_reports.py
-```
-
-Current release-preparation verification results are recorded in the [release checklist](docs/RELEASE_CHECKLIST.md). [AUDIT.md](AUDIT.md) is a historical source/behavior audit, not certification of the current release.
-
-Current preview verification: **261 Python tests and 91 frontend tests passed** using disposable test storage. Dependency integrity and JavaScript syntax checks passed. Earlier offline clean-install and simulated launcher checks are documented in the release checklist; they do not establish fresh upstream package provenance. See [final acceptance](docs/FINAL_ACCEPTANCE.md) for exact results and owner-confirmed manual checks.
-
-## Security and limitations
-
-- Loopback access and matching Host/Origin are mandatory; there is no authentication, TLS deployment, multi-user authorization or safe remote-hosting design. Trusted local tools can mutate data. Do not expose the Flask development server to other hosts.
-- Monitoring/discovery/traceroute allow literal RFC1918 and loopback IPv4 only. No public, IPv6, link-local or unrestricted scans. Private scope alone is not proof of permission. Discovery is limited to 32 usable hosts, two workers and explicit per-scan consent.
-- ICMP filtering, TCP refusal and software failures have different meanings. Unknown results do not become network outages. Exact RTT statistics never manufacture values from bounds. Incident spans include sampling gaps/confirmation delays and are not exact physical downtime.
-- Jobs are process-local, bounded and lost on restart; failed measurement writes are not automatically replayed. Graceful shutdown drains started bounded work, while forced termination can lose it. Multi-process coordination is unsupported.
-- Monitoring, incident and notification storage has no automatic retention policy. Discovery retains 2,048 observations. Charts, query budgets, map pages and reports are bounded; see the [reference](docs/REFERENCE.md) for exact limits.
-- DNS can use OS caches/hosts/resolvers and cannot safely cancel an OS resolver thread. Traceroute depends on Windows/locale/routing policies. Neither establishes physical topology or complete device enumeration.
-- PDFs use bundled fonts with visible Unicode escape fallbacks for unsupported glyphs. CSV formula safety deliberately prefixes risky text. Exports, notes, databases and custom logs can contain private data and need local access controls/backups.
-- Screenshots use simulated demo data. Full historical analytics, actual browser downloads, touch/mobile/keyboard/screen-reader acceptance and separately authorized discovery still require manual final testing.
-
-## Repository and license
-
-Application modules remain at the root; frontend assets are in `static/`, templates in `templates/`, tests/benchmarks in `tests/`, and release documentation in `docs/`. Databases/sidecars, environments, logs, reports/exports, CSV/PDF files, caches and private/raw data folders are ignored. Only reviewed, current screenshots should be version controlled. Ignore rules do not remove already-tracked secrets; review staged content before publication.
-
-Licensed under the [MIT License](LICENSE). Copyright (c) 2026 Sanad Nawayseh. Dependency licenses remain their respective owners'.
-
-This source may be published as a clearly labeled portfolio preview with these limitations. Before declaring a fully accepted release, complete the [release checklist](docs/RELEASE_CHECKLIST.md), including dependency provenance review and remaining manual OS/browser testing. No public service deployment is supported.
+[MIT License](LICENSE) · Copyright (c) 2026 Sanad Nawayseh. Third-party dependencies retain their respective licenses.

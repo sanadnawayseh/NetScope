@@ -2,6 +2,16 @@
 
 Environment variables are read at application startup. Set them in PowerShell before starting `app.py`; restart to apply changes. NetScope does not load `.env` files automatically. Do not commit machine-specific configuration, databases or operator notes.
 
+## Windows setup and compatibility
+
+The verified runtime baseline is Windows x64 with CPython **3.10.7**, Windows `ping.exe` and `tracert.exe`, and a modern JavaScript/Canvas/SVG browser. Node.js **24.14.1** is needed only for the documented frontend development checks; no npm install is required to run the app. Other interpreter/OS versions and localized probe output require separate verification; dormant non-Windows ping branches do not establish Linux/macOS support.
+
+From the project root (the folder containing `app.py`), install and run using the [README quick start](../README.md#quick-start). Activation and execution-policy changes are unnecessary. Use the direct `app.py` launcher, one process, no reloader/debug mode; do not substitute `flask run`, multiple workers, a tunnel, proxy or public bind. Use the same localhost/127.0.0.1 origin for all dashboard interactions. Stop normally with Ctrl+C.
+
+Startup configures rotating logs, initializes or migrates a compatible database, and starts automatic monitoring. A fresh database seeds Local computer at `127.0.0.1:80`; a refused port is a valid negative TCP result independent of ICMP. Existing devices/history and intentionally empty inventories are preserved. Unknown/incompatible schemas fail rather than reset data. Back up private data before upgrades; no downgrade/repair tool is supplied.
+
+Use the exact runtime and development lock files for the verified package snapshot. The ranges in `requirements.txt` and `requirements-dev.txt` are maintenance inputs. Locked versions are not artifact hashes, a vulnerability certification or cross-platform compatibility proof. The prior clean-install check reconstructed wheels offline from installed packages; it did not verify fresh PyPI artifact provenance. See the [release checklist](RELEASE_CHECKLIST.md) for the isolated verifier and full test procedure.
+
 ## Monitoring and storage
 
 | Variable | Default | Accepted value / behavior |
