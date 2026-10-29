@@ -26,7 +26,7 @@ PASS below means source inspection and the executed automated tests support the 
 | Clean locked installation and launcher integration | PASS | Offline reconstructed wheels in a new isolated venv; runtime/dev install, pip check, fresh/v0 launcher, simulated persistence and graceful shutdown. |
 | Fresh PyPI installation, artifact provenance and vulnerability audit | NOT VERIFIED | Exact pins have no artifact hashes; offline repacking cannot validate upstream provenance. |
 | README/configuration/architecture/reference links | PASS | Source review and 22 resolving local links. Mermaid source reviewed; renderer not rerun in this audit. |
-| Current screenshots and licensing | NOT VERIFIED | Legacy screenshots are excluded from the current preview tree; no repository license has been chosen. |
+| Current screenshots and licensing | NOT VERIFIED | Legacy screenshots are excluded from the current preview tree; the owner subsequently approved the root MIT License. |
 
 ## Exact executed checks
 
@@ -132,7 +132,7 @@ Verification after removal: full Python suite **261 passed in 32.397 s** using d
 | --- | --- |
 | Critical | None demonstrated in the tested local deployment scope. |
 | High | Complete and record normal Windows/browser end-to-end acceptance before calling the release fully accepted. Remote/public service deployment remains unsupported. |
-| Medium | Choose a repository license; verify a fresh upstream lock install and dependency provenance/security; verify true phone-width/assistive-technology behavior and actual download workflows. |
+| Medium | Verify a fresh upstream lock install and dependency provenance/security; verify true phone-width/assistive-technology behavior and actual download workflows. |
 | Low | Replace explicitly legacy screenshots with reviewed genuine current captures; verify Mermaid rendering in the publication target; track long-history performance and improve readability in future focused work. |
 
 No commit or push was performed. Only the numeric fix, its regression test and this audit document were added/modified. Publishing a clearly labeled local portfolio release candidate is a separate owner decision; a claim of 100% final verification is not supported yet.

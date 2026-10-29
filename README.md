@@ -150,6 +150,6 @@ Current preview verification: **261 Python tests and 91 frontend tests passed** 
 
 Application modules remain at the root; frontend assets are in `static/`, templates in `templates/`, tests/benchmarks in `tests/`, and release documentation in `docs/`. Databases/sidecars, environments, logs, reports/exports, CSV/PDF files, caches and private/raw data folders are ignored. Only reviewed, current screenshots should be version controlled. Ignore rules do not remove already-tracked secrets; review staged content before publication.
 
-No license has been selected. **MIT is recommended as an option**, but no LICENSE file or licensing grant is added without the owner's decision. Dependency licenses remain their respective owners'.
+Licensed under the [MIT License](LICENSE). Copyright (c) 2026 Sanad Nawayseh. Dependency licenses remain their respective owners'.
 
-This source may be published as a clearly labeled portfolio preview with these limitations. A license has not been granted. Before declaring a fully accepted release, complete the [release checklist](docs/RELEASE_CHECKLIST.md), including the license decision, dependency provenance review and remaining manual OS/browser testing. No public service deployment is supported.
+This source may be published as a clearly labeled portfolio preview with these limitations. Before declaring a fully accepted release, complete the [release checklist](docs/RELEASE_CHECKLIST.md), including dependency provenance review and remaining manual OS/browser testing. No public service deployment is supported.
