@@ -1,5 +1,7 @@
 # NetScope
 
+**Full-Stack Network Observability & Incident Management System**
+
 **Portfolio preview — local Windows application, not production-ready.** Monitoring, incident lifecycle and in-app notification checks have owner-confirmed manual passes. Full historical analytics/report downloads, discovery/map interactions, narrow layouts and accessibility acceptance remain incomplete.
 
 A local-first network monitoring and diagnostics platform built with Python, Flask, SQLite and vanilla JavaScript. NetScope records independent ICMP/TCP observations, explains uncertain results, and keeps monitoring data on your machine.
