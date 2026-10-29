@@ -27,7 +27,23 @@ Full metric definitions, API contracts, retention and size limits are in the [fe
 
 ## Screenshots
 
-Current screenshots are not included. Earlier genuine loopback captures predate the present interface and are excluded from this preview rather than presented as current UI. They remain in historical commits. Future captures must use an isolated loopback setup and follow the [privacy checklist](screenshots/README.md).
+Current interface captures use **simulated data in a disposable demo database**, generic labels and loopback-only addresses. No personal inventory or real discovery results are shown. These images illustrate implemented UI; they do not replace the remaining manual acceptance checks. Each image passed individual privacy review and has no embedded image metadata. See the [gallery and privacy report](docs/screenshots/README.md) for provenance and limitations.
+
+![NetScope current dashboard with simulated loopback monitoring data](docs/screenshots/00-readme-hero.png)
+
+| Area | Current capture |
+| --- | --- |
+| Three loopback devices | [01-dashboard-overview.png](docs/screenshots/01-dashboard-overview.png) |
+| Six-hour exact RTT/loss charts, bounded-data and collection gaps, sampled availability timeline | [02-device-history.png](docs/screenshots/02-device-history.png) |
+| Two resolved incidents and one acknowledged active incident with filters | [03-incidents.png](docs/screenshots/03-incidents.png) |
+| Resolved lifecycle, acknowledgement note, trigger thresholds and verified sampled recovery | [04-incident-detail.png](docs/screenshots/04-incident-detail.png) |
+| Persistent in-app opened/resolved events, Read/Unread states and incident links | [05-notifications.png](docs/screenshots/05-notifications.png) |
+| Simulated responding/unresponsive/unknown loopback inventory | [06-discovery-inventory.png](docs/screenshots/06-discovery-inventory.png) |
+| Unconnected stored inventory, selection details, stale/unknown states and no invented links | [07-network-map.png](docs/screenshots/07-network-map.png) |
+| Mean/median/p95/p99, loss distribution, sampled availability and incident statistics | [08-analytics-overview.png](docs/screenshots/08-analytics-overview.png) |
+| Two-device RTT/loss/availability comparison and gaps | [09-device-comparison.png](docs/screenshots/09-device-comparison.png) |
+| PDF export controls and real demo-data download-started status | [10-reporting-export.png](docs/screenshots/10-reporting-export.png) |
+| Safe example.com/loopback inputs | [11-diagnostics.png](docs/screenshots/11-diagnostics.png) |
 
 ## Architecture
 
@@ -146,7 +162,7 @@ Current preview verification: **261 Python tests and 91 frontend tests passed** 
 - Monitoring, incident and notification storage has no automatic retention policy. Discovery retains 2,048 observations. Charts, query budgets, map pages and reports are bounded; see the [reference](docs/REFERENCE.md) for exact limits.
 - DNS can use OS caches/hosts/resolvers and cannot safely cancel an OS resolver thread. Traceroute depends on Windows/locale/routing policies. Neither establishes physical topology or complete device enumeration.
 - PDFs use bundled fonts with visible Unicode escape fallbacks for unsupported glyphs. CSV formula safety deliberately prefixes risky text. Exports, notes, databases and custom logs can contain private data and need local access controls/backups.
-- Current screenshots are omitted. Full historical analytics, actual browser downloads, touch/mobile/keyboard/screen-reader acceptance and separately authorized discovery still require manual final testing.
+- Screenshots use simulated demo data. Full historical analytics, actual browser downloads, touch/mobile/keyboard/screen-reader acceptance and separately authorized discovery still require manual final testing.
 
 ## Repository and license
 
