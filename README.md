@@ -16,7 +16,7 @@ A local Windows application for monitoring network checks, investigating inciden
 
 ## Overview
 
-NetScope brings device monitoring, incident investigation, and historical reporting into one browser dashboard. It records ICMP reachability and TCP service connectivity independently, preserving failed, unknown, and bounded observations rather than hiding uncertainty. Built as a portfolio project, it demonstrates a complete path from concurrent network work through transactional persistence and API design to an interactive frontend. Data stays in a local SQLite database; no cloud account or database server is needed.
+NetScope is a local Windows application that helps users monitor devices, manage incidents, and explore historical network data from a browser dashboard. It brings monitoring results, acknowledgement and recovery workflows, charts, and reports together in one place. The project demonstrates full-stack development through a Python/Flask backend, a JavaScript interface, and local SQLite storage.
 
 ## Key features
 
@@ -55,9 +55,9 @@ These captures use the same privacy-reviewed, simulated demo dataset as the hero
       <p>Inspect stored device details, independent checks, and stale states.</p>
     </td>
     <td width="50%" valign="top">
-      <strong>Report exports</strong><br>
-      <a href="docs/screenshots/10-reporting-export.png"><img src="docs/screenshots/10-reporting-export.png" alt="PDF export controls using simulated monitoring records" width="100%"></a>
-      <p>Select devices, a reporting period, and report content.</p>
+      <strong>Historical analytics</strong><br>
+      <a href="docs/screenshots/08-analytics-overview.png"><img src="docs/screenshots/08-analytics-overview.png" alt="RTT statistics, sampled availability, and incident analytics using simulated monitoring records" width="100%"></a>
+      <p>Explore RTT statistics, sampled availability, and incident analytics.</p>
     </td>
   </tr>
 </table>
@@ -80,6 +80,8 @@ flowchart LR
 ```
 
 **Stack:** Python, Flask/Werkzeug, SQLite, vanilla JavaScript, HTML/CSS, Canvas/SVG charts, and ReportLab PDFs. Tests use Python `unittest`, pypdf, and Node's built-in test runner. See the [architecture guide](docs/ARCHITECTURE.md) for transactions, thread ownership, and module boundaries.
+
+**Automated testing:** 352 passing tests (261 Python, 91 frontend).
 
 ## Quick start
 
