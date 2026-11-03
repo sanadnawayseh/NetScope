@@ -353,7 +353,8 @@ test('analytics comparison shares axes and shows independent sampled availabilit
   assert.equal(nodes.get('comparison-panel').hidden,false);
   assert.match(text(nodes.get('comparison-summary')),/Device 1.*missing RTT 1.*ICMP sampled 50%.*TCP sampled 100%.*Device 2/);
   assert.equal(nodes.get('compare-rtt').drawCalls.filter(c=>c[0]==='arc').length,2); // No invented second RTT.
-  assert.equal(nodes.get('compare-availability').drawCalls.filter(c=>c[0]==='strokeRect').length,4);
+  assert.equal(nodes.get('compare-availability').drawCalls.filter(c=>c[0]==='fillRect').length,6);
+  assert.match(nodes.get('compare-availability').attributes['aria-label'],/1: Device 1, ICMP and TCP; 2: Device 2/);
   const points=nodes.get('compare-loss').drawCalls.filter(c=>c[0]==='arc');
   assert.equal(points[0][1],points[2][1]);
   assert.match(nodes.get('comparison-status').textContent,/never continuous uptime/);
@@ -1210,4 +1211,26 @@ test('report failures and unexpected responses restore controls without download
  context.fetch=async()=>reportResponse('csv',0);await vm.runInContext('exportReport({preventDefault(){}})',context);assert.match(nodes.get('report-status').textContent,/empty or exceeds/);
  context.fetch=async()=>{throw new Error('Timeout');};await vm.runInContext('exportReport({preventDefault(){}})',context);
  assert.match(nodes.get('report-status').textContent,/Timeout.*No automatic retry/);assert.equal(created.length,0);
+});
+
+
+test('availability tracks retain partial-loss success, unknown records, gaps and time alignment',()=>{
+  const {context,nodes}=dashboard();
+  const data=analyticsFixture();
+  data.series[0].points=[
+    {checked_at:'2026-10-22T11:10:00Z',latency_ms:2,packet_loss_pct:40,icmp_check_status:'success',tcp_check_status:'failure'},
+    {checked_at:'2026-10-22T11:20:00Z',latency_ms:null,latency_upper_bound_ms:1,packet_loss_pct:null,icmp_check_status:'unknown',tcp_check_status:'success'},
+    {checked_at:'invalid',icmp_check_status:'success',tcp_check_status:'success'}];
+  data.series[1].points=[];
+  context.fixture=data;
+  vm.runInContext('comparisonData=fixture;renderComparison()',context);
+  const calls=nodes.get('compare-availability').drawCalls;
+  const bars=calls.filter(c=>c[0]==='fillRect');assert.equal(bars.length,2);
+  assert.equal(bars[1][2]-bars[0][2],30); // Independent protocol tracks.
+  assert.equal(calls.filter(c=>c[0]==='fillText'&&c[1]==='?').length,1);
+  assert.deepEqual(calls.filter(c=>c[0]==='fillText'&&/^[12] ·/.test(c[1])).map(c=>c[1]),['1 · ICMP','1 · TCP','2 · ICMP','2 · TCP']);
+  assert.equal(calls.filter(c=>c[0]==='lineTo').length,6); // Four guides, two failure strokes; no connected measurements.
+  const rtt=nodes.get('compare-rtt').drawCalls.filter(c=>c[0]==='arc');assert.equal(rtt.length,1);
+  assert.equal(bars[0][1]+1.5,rtt[0][1]); // Same elapsed-time x coordinate across metrics.
+  assert.match(nodes.get('compare-availability').attributes['aria-label'],/Blank spans: no stored observations/);
 });

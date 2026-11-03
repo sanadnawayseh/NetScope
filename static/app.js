@@ -226,7 +226,7 @@ function drawLossChart() {
   const width=canvas.getBoundingClientRect().width||700, height=220, left=48, right=16, top=15, bottom=32;
   const bounds = timeBounds(history, historyWindow);
   canvas.width=Math.round(width*scale); canvas.height=height*scale; ctx.setTransform(scale,0,0,scale,0,0);
-  ctx.font='10px Segoe UI'; ctx.strokeStyle='#26313e'; ctx.fillStyle='#7f90a6'; ctx.lineWidth=1;
+  ctx.font='12px Segoe UI'; ctx.strokeStyle='#26313e'; ctx.fillStyle='#7f90a6'; ctx.lineWidth=1;
   for(const percent of [100,75,50,25,0]){
     const y=top+(height-top-bottom)*(1-percent/100);
     ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(width-right,y);ctx.stroke();ctx.fillText(`${percent}%`,5,y+3);
@@ -318,41 +318,70 @@ function renderComparison() {
   if (!comparisonData) return;
   $('comparison-summary').replaceChildren();
   comparisonData.series.forEach((series,index)=>{
-    const row=element('p','muted',`${index+1}. ${series.name}: ${summaryText(series.summary)}${series.truncated ? ' · Plot capped at newest 2000 rows; summary covers full range.' : ''}`);
-    row.style.borderLeft=`3px solid ${comparisonColors[index]}`; row.style.paddingLeft='8px';
+    const s=series.summary,row=element('article','comparison-card');
+    row.style.borderLeft=`3px solid ${comparisonColors[index]}`;
+    row.append(element('h3','',`${index+1}. ${series.name}`),element('p','muted',`${s.record_count} records · ${s.valid_measurements} valid · ${s.unknown_measurements} unknown`));
+    const groups=element('div','comparison-metrics');
+    const group=(title,details)=>{const section=element('section');section.append(element('h4','',title),element('p','',details));groups.append(section);};
+    group('Exact RTT · ms',`${s.exact_rtt_count} exact · mean ${fmt(s.average_latency_ms)} ms · min ${fmt(s.minimum_latency_ms)} / max ${fmt(s.maximum_latency_ms)} ms · missing RTT ${s.missing_rtt_count}`);
+    group('Packet loss · %',`Mean ${fmt(s.average_packet_loss_pct)}% · ${s.valid_loss_count} valid · ${s.missing_loss_count} missing`);
+    for(const protocol of ['icmp','tcp']){const v=s[protocol];group(`${protocol.toUpperCase()} sampled availability`,`${protocol.toUpperCase()} sampled ${fmt(v.percentage)}${v.percentage==null?'':'%'} · ${v.successful_checks}/${v.valid_checks} successful / valid · ${v.excluded_checks} unknown`);}
+    row.append(groups);
+    if(series.truncated)row.append(element('p','chart-note','Plot capped at newest 2000 rows; summary covers full range.'));
     $('comparison-summary').append(row);
   });
   for (const metric of ['rtt','loss','availability']) drawComparisonChart(metric);
-  $('comparison-status').textContent = `${observationLabel(comparisonData.start)} → ${observationLabel(comparisonData.end)} · Common time axes. Lines break after 5 minutes; availability dots are individual sampled checks, never continuous uptime. No records means missing data, not downtime.`;
+  $('comparison-status').textContent = `${observationLabel(comparisonData.start)} → ${observationLabel(comparisonData.end)} · Common time axes. Lines break after 5 minutes; availability marks are individual sampled checks, never continuous uptime. No records means missing data, not downtime.`;
+}
+function drawComparisonAvailability() {
+  const canvas=$('compare-availability'),ctx=canvas.getContext('2d'),scale=window.devicePixelRatio||1;
+  const width=canvas.getBoundingClientRect().width||700,left=90,right=16,top=12,rowHeight=30;
+  const height=top+comparisonData.series.length*2*rowHeight+40,bounds=timeBounds([],comparisonData);
+  canvas.style.height=`${height}px`;canvas.width=Math.round(width*scale);canvas.height=height*scale;ctx.setTransform(scale,0,0,scale,0,0);ctx.font='12px Segoe UI';
+  comparisonData.series.forEach((series,index)=>{
+    for(const [offset,protocol] of ['icmp','tcp'].entries()){
+      const y=top+(index*2+offset+.5)*rowHeight;
+      ctx.fillStyle=comparisonColors[index];ctx.textAlign='left';ctx.fillText(`${index+1} · ${protocol.toUpperCase()}`,8,y+4);
+      ctx.strokeStyle='#2c3034';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(width-right,y);ctx.stroke();
+      for(const row of series.points){
+        const fraction=timeFraction(row,bounds);if(fraction===null)continue;
+        const x=left+(width-left-right)*fraction,state=row[`${protocol}_check_status`];
+        ctx.strokeStyle=comparisonColors[index];ctx.fillStyle=comparisonColors[index];ctx.lineWidth=2;
+        if(state==='success')ctx.fillRect(x-1.5,y-5,3,10);
+        else if(state==='failure'){ctx.beginPath();ctx.moveTo(x-3,y-4);ctx.lineTo(x+3,y+4);ctx.moveTo(x-3,y+4);ctx.lineTo(x+3,y-4);ctx.stroke();}
+        else {ctx.fillStyle='#c3c8cd';ctx.textAlign='center';ctx.fillText('?',x,y+4);}
+      }
+    }
+  });
+  ctx.fillStyle='#aeb5bb';ctx.textAlign='left';ctx.fillText(new Date(bounds[0]).toLocaleString(),left,height-9);
+  ctx.textAlign='right';ctx.fillText(new Date(bounds[1]).toLocaleString(),width-right,height-9);
+  canvas.setAttribute('aria-label',`Sampled availability tracks. ${comparisonData.series.map((s,i)=>`${i+1}: ${s.name}, ICMP and TCP`).join('; ')}. Bar: successful; cross: failed; question mark: unknown/excluded. Blank spans: no stored observations. Not continuous uptime.`);
 }
 function drawComparisonChart(metric) {
+  if(metric==='availability'){drawComparisonAvailability();return;}
   const canvas=$(`compare-${metric}`),ctx=canvas.getContext('2d'),scale=window.devicePixelRatio||1;
-  const width=canvas.getBoundingClientRect().width||700,height=220,left=48,right=16,top=15,bottom=38;
+  const width=canvas.getBoundingClientRect().width||700,height=220,left=90,right=16,top=15,bottom=38;
   canvas.width=Math.round(width*scale);canvas.height=height*scale;ctx.setTransform(scale,0,0,scale,0,0);
   const bounds=timeBounds([],comparisonData), value=row=>metric==='rtt'?row.latency_ms:row.packet_loss_pct;
   const exact=comparisonData.series.flatMap(s=>s.points.map(value)).filter(Number.isFinite);
   const maximum=metric==='rtt'?Math.max(10,...exact)*1.2:100;
-  ctx.font='10px Segoe UI';ctx.fillStyle='#949a9f';ctx.strokeStyle='#2c3034';
+  ctx.font='12px Segoe UI';ctx.fillStyle='#949a9f';ctx.strokeStyle='#2c3034';
   for(let i=0;i<3;i++){const y=top+(height-top-bottom)*i/2;ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(width-right,y);ctx.stroke();ctx.fillText(fmt(maximum*(1-i/2)),4,y+3);}
   comparisonData.series.forEach((series,index)=>{
     ctx.strokeStyle=comparisonColors[index];ctx.fillStyle=comparisonColors[index];ctx.lineWidth=1.5;
-    for(const protocol of metric==='availability'?['icmp','tcp']:[null]){
-      let previous=null;
-      series.points.forEach(row=>{
-        const state=protocol?row[`${protocol}_check_status`]:null;
-        const sample=protocol?(state==='success'?100:state==='failure'?0:null):value(row);
-        const fraction=timeFraction(row,bounds),time=chartTime(row);
-        if(!Number.isFinite(sample)||fraction===null){previous=null;return;}
-        const x=left+(width-left-right)*fraction,y=top+(height-top-bottom)*(1-sample/maximum);
-        if(previous && !protocol && time-previous[2]<=CHART_GAP_MS){ctx.beginPath();ctx.moveTo(previous[0],previous[1]);ctx.lineTo(x,y);ctx.stroke();}
-        if(protocol==='tcp')ctx.strokeRect(x-2,y-2,4,4);else{ctx.beginPath();ctx.arc(x,y,2,0,Math.PI*2);ctx.fill();}
-        previous=[x,y,time];
-      });
-    }
+    let previous=null;
+    series.points.forEach(row=>{
+      const sample=value(row),fraction=timeFraction(row,bounds),time=chartTime(row);
+      if(!Number.isFinite(sample)||fraction===null){previous=null;return;}
+      const x=left+(width-left-right)*fraction,y=top+(height-top-bottom)*(1-sample/maximum);
+      if(previous && time-previous[2]<=CHART_GAP_MS){ctx.beginPath();ctx.moveTo(previous[0],previous[1]);ctx.lineTo(x,y);ctx.stroke();}
+      ctx.beginPath();ctx.arc(x,y,2,0,Math.PI*2);ctx.fill();
+      previous=[x,y,time];
+    });
   });
   ctx.fillStyle='#949a9f';ctx.textAlign='left';ctx.fillText(new Date(bounds[0]).toLocaleString(),left,height-9);
   ctx.textAlign='right';ctx.fillText(new Date(bounds[1]).toLocaleString(),width-right,height-9);
-  canvas.setAttribute('aria-label',`${metric} comparison. ${comparisonData.series.map(s=>s.name).join(', ')}. ${metric==='availability'?'ICMP circles, TCP squares; 100 success, 0 failure; unknown omitted.':'See per-device summaries for values.'}`);
+  canvas.setAttribute('aria-label',`${metric} comparison. ${comparisonData.series.map(s=>s.name).join(', ')}. See per-device summaries for values.`);
 }
 $('history-range').addEventListener('change', () => {
   historyRange=$('history-range').value; historyWindow=null; rangeSummary=null; history=[];

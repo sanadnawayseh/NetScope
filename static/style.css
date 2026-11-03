@@ -902,3 +902,16 @@ management stays compact below it. */
 .advanced-analytics{margin:18px 0}.analytics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:16px}.analytics-card{padding:12px;border:1px solid var(--line);border-radius:6px;min-width:0}.analytics-table{width:100%;font-size:12px;border-collapse:collapse;table-layout:fixed}.analytics-table th,.analytics-table td{padding:7px 5px;text-align:left;white-space:normal;overflow-wrap:anywhere;border-bottom:1px solid var(--line)}.analytics-incident-summary{margin-top:18px;overflow:auto}.analytics-card h4{margin:16px 0 8px}
 
 .report-actions,.report-options{display:flex;flex-wrap:wrap;gap:10px;align-items:end}.report-options label{display:flex;flex-direction:column;gap:6px;max-width:100%}.report-options select{max-width:100%}.report-form{margin:14px 0;padding:12px;border:1px solid var(--line);border-radius:6px}.report-form[hidden],.report-options[hidden]{display:none}@media(max-width:640px){.report-options{flex-direction:column;align-items:stretch}.report-actions{align-items:stretch;flex-direction:column}}
+
+#comparison-summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:16px 0; }
+.comparison-card { min-width:0; padding:4px 12px; background:#15181a; }
+.comparison-card h3 { margin:6px 0; font-size:14px; }
+.comparison-card p { margin:5px 0 10px; line-height:1.6; }
+.comparison-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 16px; }
+.comparison-metrics h4 { color:#adb5bb; font-size:12px; margin:8px 0 2px; }
+#comparison-panel .history-grid > section { min-width:0; }
+#comparison-panel .history-grid h3 { font-size:13px; line-height:1.5; }
+.comparison-availability { grid-column:1/-1; }
+.comparison-legend { color:#bcc3c9; font-size:12px; line-height:1.7; }
+@media(max-width:1050px) { #comparison-summary { grid-template-columns:1fr; } }
+@media(max-width:600px) { .comparison-metrics { grid-template-columns:1fr; } }
