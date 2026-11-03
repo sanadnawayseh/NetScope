@@ -2,6 +2,8 @@
 
 Capture date: 29 October 2026. Source checkpoint: `5b3db02ff8d3493b3729985951cfeb7e211c4f8d`.
 
+**Historical comparison update (3 November 2026):** `09-device-comparison.png` now shows the UI from `5b29243f2ea0b4f2409f5895bbee9999ff37f98d`, with separate labeled ICMP/TCP tracks, grouped statistics, and explicit success/failure/unknown indicators. This capture uses simulated observations in a separate disposable database (four generic loopback targets, 700 observations; two devices shown), including partial loss, TCP failures, unknown checks, bounded RTT and collection gaps. It was captured at a requested 1600 × 1200 desktop viewport and cropped to the comparison panel. The simulated-demo title is the only visible demo-specific template addition. The image was individually privacy-reviewed and converted from browser JPEG to RGB PNG without resizing or pixel edits; only IHDR/IDAT/IEND chunks remain. No real inventory or production database was accessed. The original capture date, fixture and viewport details below apply to the other images.
+
 ## Provenance and scope
 
 These are browser captures of the current NetScope HTML/CSS/JavaScript and real API/analytics/report rendering, using **simulated demo data in a newly created disposable SQLite database**. They are not screenshots of the owner's real inventory or evidence of real network measurements/discovery. All device addresses are loopback (`127.0.0.1`–`127.0.0.4`); `example.com` is a reserved documentation domain entered into the DNS form without resolving it.
@@ -33,7 +35,7 @@ PASS means no personal/sensitive content was found in this review; it is not a g
 | [06-discovery-inventory.png](06-discovery-inventory.png) | Simulated responding/unresponsive/unknown loopback inventory; consent unchecked; no scan | 1207 × 764 | PASS |
 | [07-network-map.png](07-network-map.png) | Unconnected stored inventory, selection details, stale/unknown states and no invented links | 1207 × 776 | PASS |
 | [08-analytics-overview.png](08-analytics-overview.png) | Mean/median/p95/p99, loss distribution, sampled availability and incident statistics | 1222 × 1937 | PASS |
-| [09-device-comparison.png](09-device-comparison.png) | Two-device RTT/loss/availability comparison and gaps | 1207 × 688 | PASS |
+| [09-device-comparison.png](09-device-comparison.png) | Two-device RTT/loss comparison, separate ICMP/TCP sampled-availability tracks, unknown observations and gaps | 1367 × 857 | PASS |
 | [10-reporting-export.png](10-reporting-export.png) | PDF export controls and real demo-data download-started status | 1222 × 483 | PASS |
 | [11-diagnostics.png](11-diagnostics.png) | Safe example.com/loopback inputs; DNS/traceroute not executed | 1222 × 745 | PASS |
 
@@ -56,6 +58,6 @@ PASS means no personal/sensitive content was found in this review; it is not a g
 - `06-discovery-inventory.png`: `6b0efabb89bc1eca3c308bd74c92a17c18af81fcdbbd9d87856155969a09b89c`
 - `07-network-map.png`: `d6ff443ebd9ba68fe1cfb5b08c9412f81bdcb897e6f81fa6eaafdec6e4a2c64d`
 - `08-analytics-overview.png`: `edfc4ec6c8571d89dbd579ada35fdc0735d3135eb37f7a4ba8398d9e6fe7ad20`
-- `09-device-comparison.png`: `e662e67ed422600190eef2517d74b385fd85d369b841795694dd52164bf32d1b`
+- `09-device-comparison.png`: `044883e806af47cc6c54cc6977f2874b031a9c13bbd8124c257fc297de2033bf`
 - `10-reporting-export.png`: `fb99fbe2d76c9ee27c1b15c14aadc1473f955127170320372f58923de904c934`
 - `11-diagnostics.png`: `dda4f4b23b2ab59b206567a87505c4f51df35161df51abaaaa7a3f82d5d7719c`
