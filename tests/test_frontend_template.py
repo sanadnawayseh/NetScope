@@ -87,3 +87,56 @@ class FrontendTemplateTests(unittest.TestCase):
         self.assertEqual(template.attributes['add-device-close']['type'], 'button')
         self.assertLess(html.index('id="add-device-toggle"'), html.index('class="device-table"'))
         self.assertRegex(html, r'<th scope="col" class="actions-heading">Actions</th>')
+
+    def test_declutter_preserves_safety_and_measurement_context(self):
+        html = netscope.app.test_client().get('/').get_data(as_text=True)
+        template = Template()
+        template.feed(html)
+        for removed in ('Local only', 'Local workspace', 'Flask / SQLite', 'Private network monitoring',
+                        'Local-first. Real measurements.', 'Two workers', 'SQL window'):
+            self.assertNotIn(removed, html)
+        self.assertNotIn('discovery-authorized', template.ids)
+        self.assertNotIn('trace-authorized', template.ids)
+        for essential in ('Connections are unverified', 'not continuous uptime',
+                          'Unknown means', 'Stale means'):
+            self.assertIn(essential, html)
+        self.assertEqual(template.attributes['network-map-svg']['aria-describedby'], 'network-map-help')
+        self.assertNotIn('discovery-summary', template.ids)
+        self.assertNotIn('aria-describedby', template.attributes['discovery-cidr'])
+        self.assertNotIn('class="topbar"', html)
+        self.assertNotIn('class="slash"', html)
+        self.assertIn('<h1>Network overview</h1>', html)
+        self.assertEqual(template.tags['notification-toggle'], 'button')
+
+    def test_discovery_uses_a_native_per_scan_confirmation_dialog(self):
+        html = netscope.app.test_client().get('/').get_data(as_text=True)
+        template = Template(); template.feed(html)
+        self.assertEqual(template.tags['discovery-confirmation'], 'dialog')
+        self.assertNotIn('open', template.attributes['discovery-confirmation'])
+        self.assertEqual(template.attributes['discovery-confirmation']['aria-labelledby'], 'discovery-confirm-title')
+        self.assertEqual(template.attributes['discovery-confirmation']['aria-describedby'], 'discovery-confirm-warning')
+        self.assertIn('Only scan networks you own or are authorized to test.', html)
+        self.assertIn('autofocus', template.attributes['discovery-confirm-cancel'])
+        for control in ('discovery-confirm-cancel', 'discovery-confirm-scan'):
+            self.assertEqual(template.attributes[control]['type'], 'button')
+        self.assertNotIn('trace-authorized', template.ids)
+        self.assertNotIn('discovery-authorized', template.ids)
+
+    def test_manual_diagnostics_is_compact_with_contextual_help_and_direct_traceroute(self):
+        html = netscope.app.test_client().get('/').get_data(as_text=True)
+        template = Template()
+        template.feed(html)
+        manual = html.split('class="panel manual-diagnostics"', 1)[1]
+        for removed in ('NAME RESOLUTION', 'ROUTE DIAGNOSTICS', 'DNS diagnostics',
+                        'Windows only', 'dns-scope', 'trace-scope', 'means no reply'):
+            self.assertNotIn(removed, manual)
+        self.assertIn('<h3>DNS Lookup</h3>', manual)
+        self.assertIn('<h3>Traceroute</h3>', manual)
+        self.assertIn('Look up DNS', manual)
+        self.assertIn('Run traceroute', manual)
+        self.assertIn('hidden', template.attributes['dns-help'])
+        self.assertNotIn('trace-authorized', template.ids)
+        self.assertEqual(template.attributes['trace-hops']['min'], '1')
+        self.assertEqual(template.attributes['trace-hops']['max'], '20')
+        self.assertEqual(template.attributes['dns-status']['aria-live'], 'polite')
+        self.assertEqual(template.attributes['trace-status']['aria-live'], 'polite')

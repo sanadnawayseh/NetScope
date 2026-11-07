@@ -78,9 +78,10 @@ class TraceDiagnostics:
         self.quota_lock = threading.Lock()
         self.requests = deque()
 
-    def trace(self, ip, authorized=False, max_hops=DEFAULT_HOPS):
+    def trace(self, ip, authorized=True, max_hops=DEFAULT_HOPS):
+        # Run traceroute is the user action; retain explicit legacy declines.
         if authorized is not True:
-            raise TraceRequestError('Confirm that you own or have permission to trace this specific destination.', 403)
+            raise TraceRequestError('Traceroute authorization must be true when provided.', 403)
         if not isinstance(ip, str) or len(ip) > 15:
             raise TraceRequestError('Enter a literal loopback or RFC1918 private IPv4 address.')
         try:

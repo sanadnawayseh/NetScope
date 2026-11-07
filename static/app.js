@@ -10,6 +10,18 @@ function timeBounds(rows, window = null) {
   return times.length ? [Math.min(...times), Math.max(...times)] : [0, 0];
 }
 function timeFraction(row, bounds) { const time = chartTime(row); return !Number.isFinite(time) ? null : bounds[0] === bounds[1] ? .5 : (time-bounds[0])/(bounds[1]-bounds[0]); }
+// Keep date and time legible on narrow canvases; full observation windows remain in text.
+function drawChartWindow(ctx, bounds, width, left, right, height) {
+  for (const [index, x, align] of [[0, left, 'left'], [1, width-right, 'right']]) {
+    const date = new Date(bounds[index]);
+    ctx.textAlign = align;
+    if (width < 600) {
+      ctx.font = '10px Segoe UI';
+      ctx.fillText(date.toLocaleDateString(undefined, {month:'short', day:'numeric'}), x, height-18);
+      ctx.fillText(date.toLocaleTimeString(undefined, {hour:'2-digit', minute:'2-digit', hour12:false}), x, height-5);
+    } else ctx.fillText(date.toLocaleString(), x, height-7);
+  }
+}
 const fmt = n => Number.isFinite(n) ? String(Number(n.toFixed(3))) : 'N/A';
 const latencyText = t => Number.isFinite(t.latency_ms) ? `${fmt(t.latency_ms)} ms` : Number.isFinite(t.latency_upper_bound_ms) ? `<${fmt(t.latency_upper_bound_ms)} ms` : 'N/A';
 async function api(path, options = {}) {
@@ -133,7 +145,7 @@ async function selectHistory(id) {
   selectedId = id;
   void loadAdvancedAnalytics();
   const selected = devices.find(t => t.id === id);
-  if (selected && !traceBusy) { $('trace-ip').value = selected.ip; $('trace-authorized').checked = false; }
+  if (selected && !traceBusy) { $('trace-ip').value = selected.ip; }
   history = []; historyWindow = null; rangeSummary = null; historyError = null; historyLoading = false;
   render();
   drawChart();
@@ -153,11 +165,11 @@ function load(force = false) {
       mapTargetsFresh=true;
       if (!devices.some(t => t.id === selectedId)) { selectedId = devices[0]?.id ?? null; history = []; }
       render();
-      $('connection').textContent = `● Backend connected · Refreshed ${new Date().toLocaleTimeString()}`;
+      $('connection').textContent = `Updated ${new Date().toLocaleTimeString()}`;
       $('global-error').hidden = true;
     } catch (e) {
       mapTargetsFresh=false;renderNetworkMap();
-      $('connection').textContent = '● Backend unavailable · Results may be stale'; failure(e);
+      $('connection').textContent = 'Disconnected · Results may be stale'; failure(e);
       if (!devices.length) tableEmpty('Cannot load devices. Start the local Flask server and retry.');
       return;
     }
@@ -196,26 +208,26 @@ function drawChart() {
   const bounds = timeBounds(history, historyWindow);
   const valid = history.filter(d => d.ping_ok === 1 && Number.isFinite(d.latency_ms) && Number.isFinite(chartTime(d)));
   const max = Math.max(10, ...valid.map(d => d.latency_ms)) * 1.2;
-  ctx.font = '10px Segoe UI'; ctx.fillStyle = '#7f90a6'; ctx.strokeStyle = '#26313e'; ctx.lineWidth = 1;
+  ctx.font = '10px Segoe UI'; ctx.fillStyle = '#A7AFB9'; ctx.strokeStyle = '#343A40'; ctx.lineWidth = 1;
   for (let i=0; i<4; i++) { const y = top + (height-top-bottom)*i/3; ctx.beginPath(); ctx.moveTo(left,y); ctx.lineTo(width-right,y); ctx.stroke(); ctx.fillText(`${Math.round(max*(1-i/3))}`, 8, y+3); }
   let previous = null;
   history.forEach((d,i) => {
     const fraction = timeFraction(d, bounds);
     if (d.ping_ok !== 1 || !Number.isFinite(d.latency_ms) || fraction === null) { previous = null; return; }
     const x = left + (width-left-right)*fraction, y = top+(height-top-bottom)*(1-d.latency_ms/max);
-    ctx.strokeStyle = '#65b9ae'; ctx.lineWidth = 2;
+    ctx.strokeStyle = '#92B4FA'; ctx.lineWidth = 2;
     if (previous && chartTime(d)-previous[2] <= CHART_GAP_MS) { ctx.beginPath(); ctx.moveTo(previous[0],previous[1]); ctx.lineTo(x,y); ctx.stroke(); }
-    ctx.fillStyle = '#65b9ae'; ctx.beginPath(); ctx.arc(x,y,2.5,0,Math.PI*2); ctx.fill(); previous = [x,y,chartTime(d)];
+    ctx.fillStyle = '#92B4FA'; ctx.beginPath(); ctx.arc(x,y,2.5,0,Math.PI*2); ctx.fill(); previous = [x,y,chartTime(d)];
   });
-  ctx.fillStyle = '#7f90a6';
-  if (history.length || historyWindow) { ctx.textAlign = 'left'; ctx.fillText(new Date(bounds[0]).toLocaleString(),left,height-7); ctx.textAlign = 'right'; ctx.fillText(new Date(bounds[1]).toLocaleString(),width-right,height-7); }
-  $('chart-status').textContent = !history.length ? 'No measurements yet. Run checks to collect the first sample.' : !valid.length ? 'No exact RTT samples in this window. Responses may report a bound, have unavailable RTT, or be historical process timings. Review ICMP and TCP results separately.' : `${history.length} recorded checks · ${valid.length} exact RTT samples`;
+  ctx.fillStyle = '#A7AFB9';
+  if (history.length || historyWindow) { drawChartWindow(ctx, bounds, width, left, right, height); }
+  $('chart-status').textContent = !history.length ? 'No measurements yet.' : !valid.length ? 'No exact RTT samples; bounded and unavailable values are excluded.' : `${history.length} recorded checks · ${valid.length} exact RTT samples`;
   canvas.setAttribute('aria-label', `ICMP round-trip time: ${valid.length} exact RTT samples from ${history.length} checks. ${valid.length ? `Minimum ${fmt(Math.min(...valid.map(d=>d.latency_ms)))} milliseconds, maximum ${fmt(Math.max(...valid.map(d=>d.latency_ms)))} milliseconds.` : ''}`);
   $('history-stats').replaceChildren();
   for (const [label, value] of [['Ping responses', history.length ? `${history.filter(d=>d.ping_ok===1).length}/${history.length}` : '—'], ['TCP accepted', history.length ? `${history.filter(d=>d.tcp_ok===1).length}/${history.length}` : '—'], ['Mean RTT', valid.length ? `${fmt(valid.reduce((s,d)=>s+d.latency_ms,0)/valid.length)} ms` : 'N/A']]) { const n = element('span','',label); n.append(element('b','',value)); $('history-stats').append(n); }
   if (rangeSummary) {
     $('history-stats').replaceChildren(element('span','',summaryText(rangeSummary.summary)));
-    $('chart-status').textContent += rangeSummary.truncated ? ' · Plot capped at newest 2000 records; summary covers full window.' : ' · Summary covers full window.';
+    $('chart-status').textContent += rangeSummary.truncated ? ' · Plot capped at newest 2000 records; summary covers full window.' : '';
   }
   if (historyError || historyLoading) {
     for (const id of ['chart-status', 'loss-chart-status', 'timeline-status']) $(id).textContent = historyError || 'Loading history…';
@@ -226,7 +238,7 @@ function drawLossChart() {
   const width=canvas.getBoundingClientRect().width||700, height=220, left=48, right=16, top=15, bottom=32;
   const bounds = timeBounds(history, historyWindow);
   canvas.width=Math.round(width*scale); canvas.height=height*scale; ctx.setTransform(scale,0,0,scale,0,0);
-  ctx.font='12px Segoe UI'; ctx.strokeStyle='#26313e'; ctx.fillStyle='#7f90a6'; ctx.lineWidth=1;
+  ctx.font='12px Segoe UI'; ctx.strokeStyle='#343A40'; ctx.fillStyle='#A7AFB9'; ctx.lineWidth=1;
   for(const percent of [100,75,50,25,0]){
     const y=top+(height-top-bottom)*(1-percent/100);
     ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(width-right,y);ctx.stroke();ctx.fillText(`${percent}%`,5,y+3);
@@ -238,13 +250,13 @@ function drawLossChart() {
     if(!Number.isFinite(d.packet_loss_pct) || fraction === null){previous=null;return;}
     const x=left+(width-left-right)*fraction;
     const y=top+(height-top-bottom)*(1-d.packet_loss_pct/100);
-    ctx.strokeStyle='#bbaa80';ctx.fillStyle='#bbaa80';ctx.lineWidth=2;
+    ctx.strokeStyle='#B4A4CF';ctx.fillStyle='#B4A4CF';ctx.lineWidth=2;
     if(previous && chartTime(d)-previous[2]<=CHART_GAP_MS){ctx.beginPath();ctx.moveTo(previous[0],previous[1]);ctx.lineTo(x,y);ctx.stroke();}
     ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();previous=[x,y,chartTime(d)];
   });
-  ctx.fillStyle='#7f90a6';
-  if(history.length || historyWindow){ctx.textAlign='left';ctx.fillText(new Date(bounds[0]).toLocaleString(),left,height-7);ctx.textAlign='right';ctx.fillText(new Date(bounds[1]).toLocaleString(),width-right,height-7);}
-  $('loss-chart-status').textContent=valid.length?`${valid.length} recorded packet-loss measurements · latest ${fmt(valid.at(-1).packet_loss_pct)}%`:'No packet-loss measurements available. Run checks to collect a five-probe batch; older records remain N/A.';
+  ctx.fillStyle='#A7AFB9';
+  if(history.length || historyWindow){drawChartWindow(ctx,bounds,width,left,right,height);}
+  $('loss-chart-status').textContent=valid.length?`${valid.length} recorded packet-loss measurements · latest ${fmt(valid.at(-1).packet_loss_pct)}%`:'No packet-loss measurements.';
   canvas.setAttribute('aria-label', `ICMP packet-loss history: ${valid.length} measurements.${valid.length?` Latest ${fmt(valid.at(-1).packet_loss_pct)} percent; minimum ${fmt(Math.min(...valid.map(d=>d.packet_loss_pct)))} percent; maximum ${fmt(Math.max(...valid.map(d=>d.packet_loss_pct)))} percent.`:''}`);
 }
 // Group collisions without aggregating or discarding the underlying observations.
@@ -413,7 +425,7 @@ async function loadComparison() {
   const requestId = ++comparisonRequest;
   if (comparisonIds.size < 2) {
     comparisonData = null; $('comparison-panel').hidden = true;
-    $('comparison-status').textContent = 'Select two to four devices to compare. Comparison uses the chosen range, or 24 hours when Latest 60 is selected.';
+    $('comparison-status').textContent = 'Select two to four devices. Latest 60 uses 24 hours for comparison and analytics.';
     return;
   }
   $('comparison-panel').hidden = false;
@@ -429,7 +441,7 @@ async function loadComparison() {
     $('comparison-status').textContent = `Comparison unavailable: ${error.message}. Retrying on the next dashboard refresh.`;
   }
 }
-const comparisonColors = ['#65b9ae','#c6ad81','#8eaedf','#c99ccf'];
+const comparisonColors = ['#92B4FA','#C1A6DE','#B7C1CF','#8ABFD5'];
 function renderComparison() {
   if (!comparisonData) return;
   $('comparison-summary').replaceChildren();
@@ -447,7 +459,7 @@ function renderComparison() {
     $('comparison-summary').append(row);
   });
   for (const metric of ['rtt','loss','availability']) drawComparisonChart(metric);
-  $('comparison-status').textContent = `${observationLabel(comparisonData.start)} → ${observationLabel(comparisonData.end)} · Common time axes. Lines break after 5 minutes; availability marks are individual sampled checks, never continuous uptime. No records means missing data, not downtime.`;
+  $('comparison-status').textContent = `${observationLabel(comparisonData.start)} → ${observationLabel(comparisonData.end)}`;
 }
 function drawComparisonAvailability() {
   const canvas=$('compare-availability'),ctx=canvas.getContext('2d'),scale=window.devicePixelRatio||1;
@@ -458,7 +470,7 @@ function drawComparisonAvailability() {
     for(const [offset,protocol] of ['icmp','tcp'].entries()){
       const y=top+(index*2+offset+.5)*rowHeight;
       ctx.fillStyle=comparisonColors[index];ctx.textAlign='left';ctx.fillText(`${index+1} · ${protocol.toUpperCase()}`,8,y+4);
-      ctx.strokeStyle='#2c3034';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(width-right,y);ctx.stroke();
+      ctx.strokeStyle='#343A40';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(width-right,y);ctx.stroke();
       for(const row of series.points){
         const fraction=timeFraction(row,bounds);if(fraction===null)continue;
         const x=left+(width-left-right)*fraction,state=row[`${protocol}_check_status`];
@@ -469,8 +481,7 @@ function drawComparisonAvailability() {
       }
     }
   });
-  ctx.fillStyle='#aeb5bb';ctx.textAlign='left';ctx.fillText(new Date(bounds[0]).toLocaleString(),left,height-9);
-  ctx.textAlign='right';ctx.fillText(new Date(bounds[1]).toLocaleString(),width-right,height-9);
+  ctx.fillStyle='#aeb5bb';drawChartWindow(ctx,bounds,width,left,right,height);
   canvas.setAttribute('aria-label',`Sampled availability tracks. ${comparisonData.series.map((s,i)=>`${i+1}: ${s.name}, ICMP and TCP`).join('; ')}. Bar: successful; cross: failed; question mark: unknown/excluded. Blank spans: no stored observations. Not continuous uptime.`);
 }
 function drawComparisonChart(metric) {
@@ -481,7 +492,7 @@ function drawComparisonChart(metric) {
   const bounds=timeBounds([],comparisonData), value=row=>metric==='rtt'?row.latency_ms:row.packet_loss_pct;
   const exact=comparisonData.series.flatMap(s=>s.points.map(value)).filter(Number.isFinite);
   const maximum=metric==='rtt'?Math.max(10,...exact)*1.2:100;
-  ctx.font='12px Segoe UI';ctx.fillStyle='#949a9f';ctx.strokeStyle='#2c3034';
+  ctx.font='12px Segoe UI';ctx.fillStyle='#A7AFB9';ctx.strokeStyle='#343A40';
   for(let i=0;i<3;i++){const y=top+(height-top-bottom)*i/2;ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(width-right,y);ctx.stroke();ctx.fillText(fmt(maximum*(1-i/2)),4,y+3);}
   comparisonData.series.forEach((series,index)=>{
     ctx.strokeStyle=comparisonColors[index];ctx.fillStyle=comparisonColors[index];ctx.lineWidth=1.5;
@@ -495,8 +506,7 @@ function drawComparisonChart(metric) {
       previous=[x,y,time];
     });
   });
-  ctx.fillStyle='#949a9f';ctx.textAlign='left';ctx.fillText(new Date(bounds[0]).toLocaleString(),left,height-9);
-  ctx.textAlign='right';ctx.fillText(new Date(bounds[1]).toLocaleString(),width-right,height-9);
+  ctx.fillStyle='#A7AFB9';drawChartWindow(ctx,bounds,width,left,right,height);
   canvas.setAttribute('aria-label',`${metric} comparison. ${comparisonData.series.map(s=>s.name).join(', ')}. See per-device summaries for values.`);
 }
 function changeHistoryRange(value) {
@@ -546,8 +556,8 @@ function renderIncidentRows() {
   for(const row of sorted){
     const item=element('li',`incident-row incident-${row.state.toLowerCase()}`);
     item.append(element('h3','',`${incidentDeviceName(row)} · ${incidentConditions[row.condition]||row.condition}`),element('span','mono',row.state));
-    item.append(element('p','muted',`First observed ${observationLabel(row.first_observed)} · Open confirmed ${observationLabel(row.triggering_measurements?.trigger?.observed_at)} · ${incidentDuration(row)}${row.resolved_at?' · Recovered '+observationLabel(row.resolved_at):''}${row.acknowledged_at?' · Acknowledged '+observationLabel(row.acknowledged_at):''}`));
-    item.append(element('p','muted',incidentValues(row)));
+    item.append(element('p','muted',`Since ${observationLabel(row.first_observed)} · ${incidentDuration(row)}${row.resolved_at?' · Recovered '+observationLabel(row.resolved_at):''}`));
+
     const button=element('button','secondary',`Details #${row.id}`);button.type='button';button.setAttribute('aria-controls','incident-detail');button.onclick=()=>loadIncidentDetail(row.id,true);
     item.append(button);list.append(item);
   }
@@ -559,13 +569,13 @@ async function loadIncidents() {
     const [data,summary]=await Promise.all([api('/api/incidents?'+incidentQuery()),api('/api/incidents/summary')]);
     if(requestId!==incidentRequest)return;
     incidentRows=data.incidents;
-    $('incident-overview').textContent=`${summary.active} active · ${summary.open} open · ${summary.acknowledged} acknowledged (all stored incidents, including removed devices)`;
+    $('incident-overview').textContent=`${summary.active} active · ${summary.open} open · ${summary.acknowledged} acknowledged · All devices, including removed`;
     $('incident-counts').replaceChildren();
     for(const [condition,label] of Object.entries(incidentConditions)){
       const counts=summary.by_condition[condition];$('incident-counts').append(element('span','',`${label}: ${counts.OPEN} open / ${counts.ACKNOWLEDGED} acknowledged`));
     }
     renderIncidentRows();
-    $('incident-status').textContent=`${incidentRows.length} incidents displayed · newest first by observation time${data.next_before_id?' · Newest 100 records loaded; narrow filters for older history.':''} · Refreshed ${new Date().toLocaleTimeString()}`;
+    $('incident-status').textContent=`${incidentRows.length} ${incidentRows.length===1?'incident':'incidents'} · Newest first${data.next_before_id?' · Newest 100 records loaded; narrow filters for older history.':''} · Refreshed ${new Date().toLocaleTimeString()}`;
     if(incidentDetailId!==null)await loadIncidentDetail(incidentDetailId,false);
   }catch(error){
     if(requestId!==incidentRequest)return;
@@ -579,11 +589,10 @@ function renderIncidentDetail() {
   incidentRenderedKey=JSON.stringify(row);
   panel.append(element('h3','',`Incident #${row.id} · ${incidentDeviceName(row)} · ${row.state}`),element('p','',incidentConditions[row.condition]||row.condition));
   panel.append(element('p','muted',`First ${observationLabel(row.first_observed)} · Latest ${observationLabel(row.latest_observed)} · ${incidentDuration(row)}`),element('p','muted',incidentValues(row)));
-  if(row.resolved_at)panel.append(element('p','muted',`Verified recovery ${observationLabel(row.resolved_at)} · Resolution result #${row.resolving_result_id} · Recovery value ${fmt(row.recovery?.measurement?.value)} · Recovery threshold ${fmt(row.recovery?.thresholds?.threshold)}`));
-  panel.append(element('p','muted',`First qualifying result #${row.triggering_measurements?.first?.result_id ?? 'N/A'} · Trigger result #${row.triggering_result_id} · Latest result #${row.latest_result_id}`));
+  if(row.resolved_at)panel.append(element('p','muted',`Verified recovery ${observationLabel(row.resolved_at)} · Recovery value ${fmt(row.recovery?.measurement?.value)} · Recovery threshold ${fmt(row.recovery?.thresholds?.threshold)}`));
   if(row.acknowledged_at)panel.append(element('p','muted',`Acknowledged ${observationLabel(row.acknowledged_at)}${row.operator_note?' · Note: '+row.operator_note:''}`));
   if(row.state==='OPEN'){
-    const label=element('label','','Optional operator note (500 characters; avoid secrets)'),note=element('textarea');
+    const label=element('label','','Operator note (optional; avoid secrets)'),note=element('textarea');
     note.id='incident-note';note.maxLength=500;note.value=incidentNoteDraft;note.rows=2;note.disabled=incidentAckBusy;
     note.addEventListener('input',()=>{incidentNoteDraft=note.value;});label.append(note);
     const button=element('button','',incidentAckBusy?'Acknowledging…':'Acknowledge');button.type='button';button.disabled=incidentAckBusy;button.onclick=acknowledgeSelectedIncident;
@@ -615,6 +624,19 @@ async function acknowledgeSelectedIncident() {
 for(const id of ['incident-device','incident-condition','incident-state','incident-range'])$(id).addEventListener('change',()=>{void loadIncidents();});
 $('incident-refresh').addEventListener('click',()=>loadIncidents());
 let dnsBusy = false;
+function showDNSErrorHelp(code) {
+  const help = {
+    not_found:'Check the spelling or try another domain; the name may have no address records.',
+    no_addresses:'The name may have other DNS records without an IPv4 or IPv6 address.',
+    temporary_failure:'Check your network or DNS server, then retry.',
+    resolver_failure:'Check your network and DNS configuration. A lookup failure does not prove the domain is offline.',
+    timeout:'Wait before retrying; the resolver may still be working.',
+    restricted_results:'Non-public addresses are withheld and are never contacted.'
+  };
+  $('dns-error-help').textContent = help[code] || '';
+  $('dns-help').hidden = !help[code];
+  $('dns-help').open = false;
+}
 async function runDNSLookup(event) {
   event.preventDefault();
   if (dnsBusy) return;
@@ -622,10 +644,12 @@ async function runDNSLookup(event) {
   const button = $('dns-submit');
   button.disabled = true; button.textContent = 'Resolving…';
   $('dns-results').replaceChildren();
-  $('dns-status').textContent = 'Looking up addresses with the system resolver…';
+  showDNSErrorHelp(null);
+  $('dns-status').textContent = 'Looking up DNS…';
   try {
     const data = await api('/api/dns', {method:'POST', body:JSON.stringify({domain:$('dns-domain').value}), signal:AbortSignal.timeout(8000)});
-    $('dns-status').textContent = `${data.domain} · ${fmt(data.duration_ms)} ms lookup duration · ${data.ok ? 'System resolver results' : data.error}`;
+    $('dns-status').textContent = data.ok ? `${data.domain} · ${fmt(data.duration_ms)} ms lookup duration` : `DNS lookup failed: ${data.error}`;
+    if (!data.ok) showDNSErrorHelp(data.code);
     if (data.ok) {
       for (const [key,label] of [['a','A · IPv4'],['aaaa','AAAA · IPv6']]) {
         const section = element('div', 'dns-answer'); section.append(element('h4', '', label));
@@ -662,18 +686,20 @@ function renderTrace(data) {
     body.append(row);
   }
   table.append(caption,head,body);$('trace-results').append(table);
+  const notes = [];
+  if (data.hops.some(hop => hop.rtts.includes('*'))) notes.push('* means no reply, not proof a router is down.');
+  if (data.status === 'reached') notes.push('Reached: the destination replied.');
+  if (notes.length) $('trace-results').append(element('p', 'chart-note', notes.join(' ')));
 }
 async function runTrace(event) {
   event.preventDefault();
   if (traceBusy) return;
-  if (!$('trace-authorized').checked) {
-    $('trace-status').textContent = 'Confirm that you own or have permission to trace this specific destination.';
-    return;
+  if (!privateIPv4($('trace-ip').value.trim())) {
+    $('trace-status').textContent='Enter a literal private or loopback IPv4 address.';return;
   }
   traceBusy = true;
   const button = $('trace-submit');button.disabled = true;button.textContent = 'Tracing…';
-  const data = {ip:$('trace-ip').value, max_hops:Number($('trace-hops').value), authorized:true};
-  $('trace-authorized').checked = false;
+  const data = {ip:$('trace-ip').value.trim(), max_hops:Number($('trace-hops').value)};
   $('trace-results').replaceChildren();
   $('trace-status').textContent = `Tracing ${data.ip}… This may take up to 35 seconds.`;
   try {
@@ -684,7 +710,6 @@ async function runTrace(event) {
     traceBusy = false;button.disabled = false;button.textContent = 'Run traceroute';
   }
 }
-$('trace-ip').addEventListener('input', () => { $('trace-authorized').checked = false; });
 $('trace-form').addEventListener('submit', runTrace);
 function setAddDeviceOpen(open) {
   $('add-device-panel').hidden = !open;
@@ -703,7 +728,7 @@ $('add-device-panel').addEventListener('keydown', event => {
 });
 $('form').addEventListener('submit', async e => {
   e.preventDefault(); const button = e.target.querySelector('button'); button.disabled = true; $('message').textContent = 'Adding device…';
-  try { const created = await api('/api/targets', {method:'POST', body:JSON.stringify(Object.fromEntries(new FormData(e.target)))}); selectedId = created.id; e.target.reset(); $('message').textContent = 'Device added. Run checks now or wait for the next monitoring cycle.'; await load(true); if (devices.some(t => t.id === created.id) && selectedId !== created.id) { selectedId = created.id; render(); await drawHistory(); } }
+  try { const created = await api('/api/targets', {method:'POST', body:JSON.stringify(Object.fromEntries(new FormData(e.target)))}); selectedId = created.id; e.target.reset(); $('message').textContent = 'Device added.'; await load(true); if (devices.some(t => t.id === created.id) && selectedId !== created.id) { selectedId = created.id; render(); await drawHistory(); } }
   catch (e) { $('message').textContent = e.message; } finally { button.disabled = false; }
 });
 let manualJobId = null, manualSubmitting = false, manualPollTimer = null, manualPollBusy = false, manualProcessed = -1;
@@ -725,7 +750,7 @@ async function pollManualJob() {
       finishManualJob(); void load(true);
     }
   } catch (error) {
-    $('check-progress').textContent = error.status === 404 ? 'Job status is no longer available. Jobs are lost on server restart or expire from memory.' : `Progress unavailable: ${error.message}. Retrying; the server job may still be running.`;
+    $('check-progress').textContent = error.status === 404 ? 'Check status expired or the server restarted. Refresh to review results.' : `Progress unavailable: ${error.message}. Retrying; the server job may still be running.`;
     if (error.status === 404 || error.status === 403) finishManualJob();
   } finally {
     manualPollBusy = false;

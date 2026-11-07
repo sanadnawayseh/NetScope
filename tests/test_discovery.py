@@ -63,6 +63,16 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/discovery/jobs',data='{}').status_code,415)
         self.probe.assert_not_called()
 
+    def test_each_submission_requires_its_own_explicit_true_consent(self):
+        self.finish(self.start('127.0.0.1/32'))
+        self.assertEqual(self.probe.call_count, 1)
+        for body in ({'cidr':'127.0.0.1/32'}, {'cidr':'127.0.0.1/32','authorized':False},
+                     {'cidr':'127.0.0.1/32','authorized':'true'}, {'cidr':'127.0.0.1/32','authorized':1}):
+            self.assertEqual(self.client.post('/api/discovery/jobs', json=body).status_code, 400)
+        self.assertEqual(self.probe.call_count, 1)
+        self.finish(self.start('127.0.0.1/32'))
+        self.assertEqual(self.probe.call_count, 2)
+
     def test_nonblocking_progress_concurrency_and_persisted_results(self):
         entered=threading.Event();release=threading.Event();mutex=threading.Lock()
         calls=0;active=0;maximum=0

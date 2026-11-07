@@ -10,11 +10,11 @@ function renderNotificationEvents(unread) {
   $('notification-toggle').textContent=`Notifications · ${unread} unread`;
   $('notification-toggle').setAttribute('aria-label',`Notifications, ${unread} unread`);
   const list=$('notification-list');list.replaceChildren();
-  if(!notificationRows.length)list.append(element('li','muted','No notification events yet.'));
+  if(!notificationRows.length)list.append(element('li','muted','No notifications.'));
   for(const event of [...notificationRows].reverse()){
     const row=element('li',`notification-row ${event.event_type==='incident_opened'?'notification-opened':'notification-resolved'}${event.read_at?' notification-read':''}`);
     row.append(element('strong','',`${event.event_type==='incident_opened'?'Opened':'Resolved'} · ${incidentDeviceName(event)} · ${incidentConditions[event.condition]||event.condition}`),
-      element('p','muted',`${observationLabel(event.event_at)} · ${event.read_at?'Read':'Unread'} · Recorded ${observationLabel(event.created_at)}`));
+      element('p','muted',`${observationLabel(event.event_at)} · ${event.read_at?'Read':'Unread'}`));
     const link=element('button','secondary',`View incident #${event.incident_id}`);link.type='button';link.onclick=()=>openNotificationIncident(event);row.append(link);
     if(!event.read_at){const read=element('button','secondary','Mark read');read.type='button';read.disabled=notificationReadBusy;read.onclick=()=>readNotificationEvent(event.id);row.append(read);}
     list.append(row);
@@ -45,7 +45,7 @@ async function loadNotifications(force=false) {
         }
       }
       renderNotificationEvents(unread);
-      $('notification-status').textContent=`${notificationRows.length} recent events displayed${data.has_more?' · More new events will load on the next refresh.':''} · Read state is shared by this local application.`;
+      $('notification-status').textContent=`${notificationRows.length} notifications${data.has_more?' · More new events will load on the next refresh.':''}`;
     } catch(error){$('notification-status').textContent=`Notifications unavailable: ${error.message}. Displayed events/count may be stale; the next refresh will retry.`;}
   })().finally(()=>{notificationLoading=false;});
   return notificationPromise;
@@ -57,7 +57,7 @@ async function loadOlderNotifications() {
     const data=await api(`/api/notifications?limit=50&before_id=${notificationOlder}`);
     if(data.stream_id!==notificationStream){notificationCursor=null;await loadNotifications(true);return;}
     notificationOlder=data.next_before_id;mergeNotificationEvents(data.events);renderNotificationEvents(data.unread_count);
-    $('notification-status').textContent=`${notificationRows.length} recent events displayed (panel limit 200). Older events remain in SQLite.`;
+    $('notification-status').textContent=`${notificationRows.length} events shown · Limit 200.`;
   }catch(error){$('notification-status').textContent=`Older notifications unavailable: ${error.message}`;$('notification-older').disabled=false;}
 }
 async function readNotificationEvent(id) {
@@ -79,7 +79,7 @@ async function readAllNotifications() {
     const result=await api('/api/notifications/read',{method:'POST',body:JSON.stringify({up_to_id:snapshot})});
     notificationRows=notificationRows.map(row=>row.id<=snapshot?{...row,read_at:row.read_at||result.read_at}:row);
     renderNotificationEvents(result.unread_count);
-    $('notification-action-status').textContent='Notifications through the displayed snapshot marked read. Newer events remain unread.';
+    $('notification-action-status').textContent='Notifications marked read. Newer events remain unread.';
   }catch(error){$('notification-action-status').textContent=`Could not mark notifications read: ${error.message}`;}
   finally{notificationReadBusy=false;await loadNotifications(true);}
 }

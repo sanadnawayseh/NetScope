@@ -39,20 +39,20 @@ These captures use the same privacy-reviewed, simulated demo dataset as the hero
   <tr>
     <td width="50%" valign="top">
       <strong>Monitoring history</strong><br>
-      <a href="docs/screenshots/02-device-history.png"><img src="docs/screenshots/02-device-history.png" alt="Simulated RTT, packet-loss and sampled-availability history" width="100%"></a>
-      <p>Time-based charts preserve missing and bounded measurements.</p>
+      <a href="docs/screenshots/02-device-history.png"><img src="docs/screenshots/02-device-history.png" alt="Simulated RTT, packet loss, and separate ICMP/TCP history with accurate cycle counts" width="100%"></a>
+      <p>Time-based charts preserve gaps; quiet ICMP/TCP tracks expose exact records and range counts.</p>
     </td>
     <td width="50%" valign="top">
       <strong>Incident investigation</strong><br>
-      <a href="docs/screenshots/03-incidents.png"><img src="docs/screenshots/03-incidents.png" alt="Simulated resolved and acknowledged incidents" width="100%"></a>
+      <a href="docs/screenshots/03-incidents.png"><img src="docs/screenshots/03-incidents.png" alt="Simulated resolved and acknowledged TCP incidents" width="100%"></a>
       <p>Review resolved incidents alongside acknowledged active conditions.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
       <strong>Network inventory map</strong><br>
-      <a href="docs/screenshots/07-network-map.png"><img src="docs/screenshots/07-network-map.png" alt="Simulated loopback inventory with stale observations and no topology edges" width="100%"></a>
-      <p>Inspect stored device details, independent checks, and stale states.</p>
+      <a href="docs/screenshots/07-network-map.png"><img src="docs/screenshots/07-network-map.png" alt="Simulated loopback inventory with a selected discovery-only address, stale observations and no topology edges" width="100%"></a>
+      <p>Inspect stored observations, unverified connections, and distinct unknown/stale states.</p>
     </td>
     <td width="50%" valign="top">
       <strong>Historical analytics</strong><br>
@@ -62,7 +62,7 @@ These captures use the same privacy-reviewed, simulated demo dataset as the hero
   </tr>
 </table>
 
-Browse the [complete gallery and privacy/provenance report](docs/screenshots/README.md) for notifications, incident details, discovery inventory, statistics, comparisons, and diagnostics.
+Browse the [complete gallery and privacy/provenance report](docs/screenshots/README.md) for notifications, incident details, discovery inventory, comparisons, reporting, diagnostics, and the [per-scan confirmation dialog](docs/screenshots/12-discovery-confirmation.png).
 
 ## Architecture & tech stack
 
@@ -81,7 +81,7 @@ flowchart LR
 
 **Stack:** Python, Flask/Werkzeug, SQLite, vanilla JavaScript, HTML/CSS, Canvas/SVG charts, and ReportLab PDFs. Tests use Python `unittest`, pypdf, and Node's built-in test runner. See the [architecture guide](docs/ARCHITECTURE.md) for transactions, thread ownership, and module boundaries.
 
-**Automated testing:** 352 passing tests (261 Python, 91 frontend).
+**Automated testing:** 387 passed (269 Python, 118 frontend); one live-network Python integration test intentionally skipped in the mocked-only run.
 
 ## Quick start
 
@@ -101,7 +101,7 @@ Run one local process using this launcher, with debug/reloader disabled. Monitor
 
 ## Testing & status
 
-**Portfolio preview — not production-ready.** The latest completed regression run passed **261 Python tests and 91 frontend tests** using disposable storage (29 October 2026). Node.js **24.14.1** was verified for development checks; it is not a runtime requirement.
+**Portfolio preview — not production-ready.** The latest completed regression run passed **269 Python tests and 118 frontend tests** using disposable storage (7 November 2026). One live-loopback integration case was intentionally skipped; all network operations in this run were mocked, and no real discovery scan was performed. Node.js **24.14.1** was verified for development checks; it is not a runtime requirement.
 
 Owner-confirmed manual checks cover Windows startup, monitoring, restart persistence, incident opening/acknowledgement/recovery, and in-app notification controls. Full historical analytics, separately authorized real discovery/map testing, report downloads/PDF visual acceptance, and responsive/accessibility acceptance remain incomplete. Sampled availability is not continuous uptime, and ordinary history has no automatic retention. Fresh upstream dependency provenance and vulnerability certification were not established.
 
@@ -112,7 +112,7 @@ Use the [release checklist](docs/RELEASE_CHECKLIST.md) for exact test commands a
 - [Architecture](docs/ARCHITECTURE.md) — components, concurrency, and persistence.
 - [Features and API reference](docs/REFERENCE.md) — workflows, endpoints, metrics, limits, and benchmarks.
 - [Setup and configuration](docs/CONFIGURATION.md) — Windows compatibility, storage, and environment settings.
-- [Screenshot gallery](docs/screenshots/README.md) — all 12 captures and privacy review.
+- [Screenshot gallery](docs/screenshots/README.md) — all 13 captures and privacy review.
 - [Release checklist](docs/RELEASE_CHECKLIST.md) · [Manual acceptance](docs/FINAL_ACCEPTANCE.md) — reproducibility and verification boundaries.
 
 [MIT License](LICENSE) · Copyright (c) 2026 Sanad Nawayseh. Third-party dependencies retain their respective licenses.

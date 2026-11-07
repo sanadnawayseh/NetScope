@@ -12,6 +12,7 @@ function dashboard(options={}) {
     return {tagName:tag,children: [], drawCalls: [], attributes: {}, listeners: {}, scrolls: [], focuses: [], style: {}, textContent: '', className: '', append(...items) {this.children.push(...items);},
       replaceChildren(...items) {this.children = items;}, setAttribute(name,value) {this.attributes[name]=value;}, addEventListener(event, handler) {this.listeners[event]=handler;},
       scrollIntoView(options) {this.scrolls.push(options);}, focus(options) {this.focuses.push(options);}, click(){this.clicked=true;},remove(){this.removed=true;},
+      showModal(){this.open=true;},close(){this.open=false;this.listeners.close?.();},
       getBoundingClientRect() {return {width: 700,height:420,left:0,top:0};},
       getContext() {const calls=this.drawCalls; return new Proxy({}, {get: (_, method) => (...args) => {calls.push([method, ...args]);}});}};
   }
@@ -26,7 +27,7 @@ function dashboard(options={}) {
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname, '../static/discovery.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname, '../static/notifications.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname, '../static/app.js'), 'utf8'), context);
-  for(const id of ['discovery-authorized','discovery-name','discovery-port'])context.document.getElementById(id);
+  for(const id of ['discovery-name','discovery-port','trace-ip','trace-hops'])context.document.getElementById(id);
   const text = n => [n.textContent, ...n.children.map(text)].join(' ');
   return {context, nodes, text, requests, pendingInitial, timers};
 }
@@ -89,7 +90,7 @@ test('historical rows without packet counts remain unavailable', () => {
   vm.runInContext("devices=[{id:1,name:'Old',ip:'127.0.0.1',port:80,ping_ok:1,tcp_ok:1,packet_loss_pct:null}];history=[{checked_at:'2026-10-14',packet_loss_pct:null}];selectedId ??= devices[0]?.id ?? null;render();drawLossChart();",context);
   assert.match(text(nodes.get('device-checks')),/ICMP PACKET LOSS N\/A/);
   assert.equal(nodes.get('loss-plot').drawCalls.filter(c=>c[0]==='arc').length,0);
-  assert.match(nodes.get('loss-chart-status').textContent,/older records remain N\/A/);
+  assert.match(nodes.get('loss-chart-status').textContent,/No packet-loss measurements/);
 });
 
 
@@ -238,7 +239,10 @@ test('incident dashboard renders real counts, device conditions, sampled spans a
   assert.match(text(nodes.get('incident-counts')),/TCP service unavailable: 1 open/);
   assert.match(text(nodes.get('incident-timeline').children[0]),/Local computer.*TCP service unavailable.*OPEN.*elapsed since first observation/);
   assert.match(text(nodes.get('incident-timeline').children[1]),/Removed device #7.*RESOLVED.*sampled span.*Recovered/);
-  assert.match(text(nodes.get('incident-timeline')),/threshold > 0 · 3 opening \/ 2 recovery checks/);
+  assert.doesNotMatch(text(nodes.get('incident-timeline')), /threshold > /);
+  context.api = async () => record;
+  await vm.runInContext('loadIncidentDetail(1,true)', context);
+  assert.match(text(nodes.get('incident-detail')), /threshold > 0 · 3 opening \/ 2 recovery checks/);
 });
 
 test('incident filters request device, condition, state and range without changing inspector',async()=>{
@@ -276,7 +280,7 @@ test('incident list and details update automatically with existing dashboard pol
   pendingInitial[0]({ok:true,json:async()=>[{id:1,name:'Local',ip:'127.0.0.1',port:80}]});
   await vm.runInContext('load()',context);
   assert.ok(paths.some(p=>p.startsWith('/api/incidents?')));
-  assert.match(nodes.get('incident-status').textContent,/1 incidents displayed/);
+  assert.match(nodes.get('incident-status').textContent,/1 incident · Newest first/);
 });
 
 test('incident loading, empty, API error, acknowledgement error and note drafts stay scoped',async()=>{
@@ -357,7 +361,7 @@ test('analytics comparison shares axes and shows independent sampled availabilit
   assert.match(nodes.get('compare-availability').attributes['aria-label'],/1: Device 1, ICMP and TCP; 2: Device 2/);
   const points=nodes.get('compare-loss').drawCalls.filter(c=>c[0]==='arc');
   assert.equal(points[0][1],points[2][1]);
-  assert.match(nodes.get('comparison-status').textContent,/never continuous uptime/);
+  assert.match(nodes.get('compare-availability').attributes['aria-label'],/Not continuous uptime/);
 });
 
 test('analytics range changes load full-window single-device statistics and retain inspector',async()=>{
@@ -465,7 +469,7 @@ test('expired manual job stops polling and explains restart or retention', async
   const {context,nodes,timers}=dashboard();
   context.api=async path=>{if(path==='/api/check-jobs')return {job_id:'old'};const error=new Error('missing');error.status=404;throw error;};
   await nodes.get('check').listeners.click();
-  assert.match(nodes.get('check-progress').textContent,/server restart or expire/);
+  assert.match(nodes.get('check-progress').textContent,/expired or the server restarted.*Refresh/);
   assert.equal(nodes.get('check').disabled,false);assert.equal(timers.size,0);
 });
 
@@ -654,14 +658,21 @@ test('DNS submission prevents duplicate in-flight requests', async () => {
 });
 
 
-test('traceroute never starts automatically and requires explicit destination authorization', async () => {
-  const {context,nodes,requests}=dashboard();
-  assert.deepEqual(requests,['/api/targets']);
-  context.document.getElementById('trace-authorized').checked=false;
-  let calls=0;context.fetch=async()=>{calls++;};
-  await vm.runInContext('runTrace({preventDefault(){}})',context);
-  assert.equal(calls,0);
-  assert.match(nodes.get('trace-status').textContent,/permission/);
+test('traceroute starts only from the explicit Run action without a consent field',async()=>{
+ const {context,nodes,requests}=dashboard();assert.deepEqual(requests,['/api/targets']);
+ nodes.get('trace-ip').value='127.0.0.1';context.document.getElementById('trace-hops').value='12';
+ const calls=[];context.api=async(path,options)=>{calls.push([path,JSON.parse(options.body)]);return {status:'reached',destination:'127.0.0.1',message:'Reached',hops:[]};};
+ await vm.runInContext('runTrace({preventDefault(){}})',context);
+ assert.deepEqual(calls,[['/api/traceroute',{ip:'127.0.0.1',max_hops:12}]]);
+});
+
+test('traceroute client rejects public, hostname and malformed destinations without submitting',async()=>{
+ const {context,nodes}=dashboard();let calls=0;context.api=async()=>{calls++;};
+ for(const ip of ['8.8.8.8','example.com','169.254.1.2','::1','127.0.0.1 & whoami','127.00.0.1']){
+  nodes.get('trace-ip').value=ip;await vm.runInContext('runTrace({preventDefault(){}})',context);
+  assert.match(nodes.get('trace-status').textContent,/literal private or loopback/);
+ }
+ assert.equal(calls,0);
 });
 
 test('traceroute table preserves reported bounds and all three timeout measurements', () => {
@@ -689,14 +700,13 @@ test('manual traceroute submits only bounded options and does not change device 
   const {context,nodes}=dashboard();seedDevices(context);
   context.document.getElementById('trace-ip').value='127.0.0.1';
   context.document.getElementById('trace-hops').value='12';
-  context.document.getElementById('trace-authorized').checked=true;
+
   const calls=[];
   context.fetch=async(path,options)=>{calls.push([path,JSON.parse(options.body)]);return {ok:true,json:async()=>({status:'reached',destination:'127.0.0.1',duration_ms:1,message:'Destination reached.',hops:[{hop:1,ip:'127.0.0.1',rtts:['<1 ms','<1 ms','<1 ms']}]})};};
   await vm.runInContext('runTrace({preventDefault(){}})',context);
   assert.equal(calls.length,1);assert.equal(calls[0][0],'/api/traceroute');
-  assert.deepEqual(calls[0][1],{ip:'127.0.0.1',max_hops:12,authorized:true});
+  assert.deepEqual(calls[0][1],{ip:'127.0.0.1',max_hops:12});
   assert.equal(vm.runInContext('selectedId',context),1);
-  assert.equal(nodes.get('trace-authorized').checked,false);
   assert.equal(nodes.get('trace-submit').disabled,false);
 });
 
@@ -704,7 +714,7 @@ test('traceroute rejects duplicate submissions while a request is in flight', as
   const {context,nodes}=dashboard();let finish,calls=0;
   context.document.getElementById('trace-ip').value='127.0.0.1';
   context.document.getElementById('trace-hops').value='12';
-  context.document.getElementById('trace-authorized').checked=true;
+
   context.fetch=()=>{calls++;return new Promise(resolve=>{finish=resolve;});};
   const first=vm.runInContext('runTrace({preventDefault(){}})',context);
   assert.equal(nodes.get('trace-submit').disabled,true);
@@ -717,7 +727,7 @@ test('traceroute API errors stay local and restore controls', async () => {
   const {context,nodes}=dashboard();
   context.document.getElementById('trace-ip').value='127.0.0.1';
   context.document.getElementById('trace-hops').value='12';
-  context.document.getElementById('trace-authorized').checked=true;
+
   context.fetch=async()=>({ok:false,status:429,json:async()=>({error:'A traceroute is already running'})});
   await vm.runInContext('runTrace({preventDefault(){}})',context);
   assert.match(nodes.get('trace-status').textContent,/already running/);
@@ -731,7 +741,7 @@ test('history failure does not mark a successful target refresh disconnected and
   context.fetch=async()=>({ok:false,status:503,json:async()=>({error:'History database unavailable'})});
   pendingInitial[0]({ok:true,json:async()=>[{id:1,name:'Local',ip:'127.0.0.1',port:80}]});
   await vm.runInContext('load()',context);
-  assert.match(nodes.get('connection').textContent,/Backend connected/);
+  assert.match(nodes.get('connection').textContent,/^Updated /);
   assert.match(nodes.get('chart-status').textContent,/History unavailable/);
   vm.runInContext('drawChart()',context);
   assert.match(nodes.get('chart-status').textContent,/History unavailable/);
@@ -799,18 +809,16 @@ test('table status sorting keeps independent unknown protocols last and timestam
   assert.deepEqual(order(),['Unknown','Failure','Success']);
 });
 
-test('device-name selection opens actual history, updates inspector, prefills trace and resets consent without running diagnostics', async () => {
+test('device-name selection opens actual history, updates inspector and prefills trace without running diagnostics', async () => {
   const {context,nodes,text}=dashboard();seedDevices(context);
   const requests=[];
   context.fetch=async path=>{requests.push(path);return {ok:true,json:async()=>[]};};
-  vm.runInContext("$('trace-authorized').checked=true",context);
   const router=nodes.get('targets').children.find(row=>row.children[0].children[0].textContent==='Homer Router');
   await router.children[0].children[0].onclick();
   assert.deepEqual(requests,['/api/analytics?targets=2&range=24h','/api/targets/2/history']);
   assert.equal(nodes.get('detail-name').textContent,'Homer Router');
   assert.equal(nodes.get('detail-address').textContent,'192.168.1.1 : 80');
   assert.equal(nodes.get('trace-ip').value,'192.168.1.1');
-  assert.equal(nodes.get('trace-authorized').checked,false);
   assert.match(text(nodes.get('device-checks')),/TCP \/ 80/);
   assert.equal(nodes.get('device-availability').children.length,2);
   assert.equal(nodes.get('diagnostics').focuses.length,1);
@@ -920,39 +928,46 @@ test('device polling and sorting leave an open form and its draft intact', () =>
 });
 const discoveryRow={id:8,scan_id:'scan',address:'192.168.1.2',cidr:'192.168.1.0/30',classification:'responding',method:'icmp_echo',observed_at:'2026-10-23T12:00:00Z'};
 const discoveryJobFixture=(state='running',completed=0)=>({job_id:'scan',cidr:'192.168.1.0/30',state,total:2,completed,failed:0,progress_percentage:completed*50,error:null});
-test('discovery requires fresh authorization and never starts from inventory polling',async()=>{
- const {context,nodes,requests}=dashboard();let posts=0;
+test('discovery opens exact scope confirmation and never starts from inventory or Cancel',async()=>{
+ const {context,nodes}=dashboard();let posts=0;
  context.api=async(path,options)=>{if(options?.method==='POST')posts++;return {observations:[]};};
- await vm.runInContext('loadDiscoveryInventory();',context);
- await vm.runInContext('startDiscovery({preventDefault(){}})',context);
- assert.equal(posts,0);assert.match(nodes.get('discovery-progress').textContent,/Confirm authorization/);
- assert.ok(!requests.some(path=>path.includes('/api/discovery/jobs')));
- nodes.get('discovery-authorized').checked=true;nodes.get('discovery-cidr').value='10.0.0.0/30';
- nodes.get('discovery-cidr').listeners.input();assert.equal(nodes.get('discovery-authorized').checked,false);
- assert.match(nodes.get('discovery-summary').textContent,/10.0.0.0\/30.*32.*Two workers/);
+ await vm.runInContext('loadDiscoveryInventory()',context);
+ nodes.get('discovery-cidr').value='192.168.1.0/30';
+ vm.runInContext('startDiscovery({preventDefault(){}})',context);
+ assert.equal(posts,0);assert.equal(nodes.get('discovery-confirmation').open,true);
+ assert.equal(nodes.get('discovery-confirm-scope').textContent,'192.168.1.0/30 · 2 usable hosts');
+ assert.equal(nodes.get('discovery-confirm-hosts').textContent,'192.168.1.1 – 192.168.1.2');
+ assert.equal(nodes.get('discovery-confirm-cancel').focuses.length,1);
+ nodes.get('discovery-confirm-cancel').listeners.click();assert.equal(nodes.get('discovery-confirmation').open,false);
+ await vm.runInContext('confirmDiscovery()',context);assert.equal(posts,0);
+ assert.equal(nodes.get('discovery-start').focuses.length,1);
 });
-test('discovery submission prevents repeated clicks and tracks terminal progress',async()=>{
+
+test('each discovery scan consumes one confirmation and prevents duplicate submissions',async()=>{
  const {context,nodes}=dashboard();const posts=[];let resolvePost;
- nodes.get('discovery-authorized').checked=true;nodes.get('discovery-cidr').value='192.168.1.0/30';
+ nodes.get('discovery-cidr').value='192.168.1.0/30';
  context.api=async(path,options)=>{
   if(options?.method==='POST'){posts.push([path,JSON.parse(options.body)]);return new Promise(resolve=>resolvePost=resolve);}
   if(path.includes('/inventory'))return {observations:[]};return discoveryJobFixture('completed',2);
  };
- const pending=vm.runInContext('startDiscovery({preventDefault(){}})',context);
- await vm.runInContext('startDiscovery({preventDefault(){}})',context);
+ vm.runInContext('startDiscovery({preventDefault(){}})',context);assert.equal(posts.length,0);
+ const pending=vm.runInContext('confirmDiscovery()',context);
+ await vm.runInContext('confirmDiscovery()',context);vm.runInContext('startDiscovery({preventDefault(){}})',context);
  assert.equal(posts.length,1);assert.deepEqual(posts[0][1],{cidr:'192.168.1.0/30',authorized:true});
- assert.equal(nodes.get('discovery-authorized').checked,false);
+ assert.equal(nodes.get('discovery-confirmation').open,false);
  resolvePost(discoveryJobFixture());await pending;
  assert.match(nodes.get('discovery-progress').textContent,/completed.*2\/2.*100%/);
  assert.equal(nodes.get('discovery-start').disabled,false);
- assert.equal(vm.runInContext('discoveryJob',context),null);
+ await vm.runInContext('confirmDiscovery()',context);assert.equal(posts.length,1);
+ vm.runInContext('startDiscovery({preventDefault(){}})',context);assert.equal(nodes.get('discovery-confirmation').open,true);assert.equal(posts.length,1);
 });
+
 test('discovery renders observed classifications and explicit enrollment selection safely',async()=>{
  const {context,nodes,text}=dashboard();
  context.api=async()=>({observations:[discoveryRow,{...discoveryRow,id:9,address:'192.168.1.3',classification:'unresponsive'},{...discoveryRow,id:10,address:'192.168.1.4',classification:'unknown'}]});
  await vm.runInContext('loadDiscoveryInventory()',context);
  const rows=nodes.get('discovery-results').children;
- assert.match(text(rows[0]),/192.168.1.2.*responding.*icmp_echo/);
+ assert.match(text(rows[0]),/192.168.1.2.*responding.*Authorized scope 192.168.1.0\/30/);
  assert.match(text(rows[1]),/unresponsive/);assert.equal(rows[1].children.length,2);
  rows[0].children[2].onclick();assert.equal(nodes.get('discovery-enroll').hidden,false);
  assert.equal(nodes.get('discovery-selected').textContent,'192.168.1.2');
@@ -985,9 +1000,9 @@ test('discovery enrollment sends selected observation and configured port and pr
  assert.equal(nodes.get('discovery-enroll').hidden,true);assert.match(nodes.get('discovery-enroll-status').textContent,/Added to monitoring/);
 });
 test('discovery handles busy submissions, stale inventory, and missing jobs without auto retry',async()=>{
- const {context,nodes,text}=dashboard();nodes.get('discovery-authorized').checked=true;nodes.get('discovery-cidr').value='10.0.0.0/30';
+ const {context,nodes,text}=dashboard();nodes.get('discovery-cidr').value='10.0.0.0/30';
  context.api=async()=>{const error=new Error('Monitoring is active');error.status=409;throw error;};
- await vm.runInContext('startDiscovery({preventDefault(){}})',context);
+ vm.runInContext('startDiscovery({preventDefault(){}})',context);await vm.runInContext('confirmDiscovery()',context);
  assert.equal(nodes.get('discovery-start').disabled,false);assert.match(nodes.get('discovery-progress').textContent,/Monitoring is active/);
  context.api=async()=>({observations:[discoveryRow]});await vm.runInContext('loadDiscoveryInventory()',context);
  context.api=async()=>{const error=new Error('Missing');error.status=404;throw error;};
@@ -1121,9 +1136,10 @@ test('advanced analytics renders accurate sample counts, N/A percentiles, distri
  assert.match(rendered,/3 stored observations.*2 classifiable.*1 unknown/);
  assert.match(rendered,/p95.*N\/A.*p99.*N\/A/);
  assert.match(rendered,/ICMP sampled availability 50%.*TCP sampled availability 100%/);
- assert.match(rendered,/needs ≥5 valid samples/);
+ assert.match(rendered,/N\/A · 2 current \/ 0 previous/);
+ assert.doesNotMatch(rendered,/SQL window|0 invalid/);
  assert.match(text(nodes.get('analytics-incidents')),/2 opened \/ 1 resolved.*1 currently unresolved.*120 s.*Removed device #5/);
- assert.match(nodes.get('analytics-window').textContent,/end excluded.*Preceding equal window.*Unresolved incidents are current/);
+ assert.match(nodes.get('analytics-window').textContent,/end excluded.*Previous:.*Unresolved as of/);
 });
 test('advanced analytics reuses history range and compared device selection and global incident scope',async()=>{
  const {context,nodes}=dashboard();const paths=[];context.api=async path=>{paths.push(path);return advancedFixture();};
@@ -1137,7 +1153,7 @@ test('advanced analytics shows valid trends with sample counts and incomplete de
  data.series[0].trends.mean_rtt_ms={sufficient:true,delta:5,relative_change_pct:50,current_count:8,previous_count:5,unit:'ms'};
  data.incidents.devices_truncated=true;context.api=async()=>data;await vm.runInContext('loadAdvancedAnalytics()',context);
  assert.match(text(nodes.get('analytics-summary')),/Mean exact RTT: \+5 ms \(50%\).*8 current \/ 5 previous/);
- assert.match(text(nodes.get('analytics-incidents')),/limited to 100 groups/);
+ assert.match(text(nodes.get('analytics-incidents')),/First 100 devices shown; totals include all/);
 });
 test('advanced analytics stale responses and failed queries cannot replace current selection',async()=>{
  const {context,nodes,text}=dashboard();let firstResolve;let calls=0;
@@ -1236,6 +1252,81 @@ test('availability tracks retain partial-loss success, unknown records, gaps and
   assert.match(nodes.get('compare-availability').attributes['aria-label'],/Blank spans: no stored observations/);
 });
 
+test('narrow chart axes split dates and times without removing either endpoint', () => {
+  const {context}=dashboard();
+  const result=vm.runInContext(`(() => {
+    const calls=[], ctx={fillText(text,x,y){calls.push({text,x,y,align:this.textAlign});}};
+    drawChartWindow(ctx, [Date.parse('2026-11-04T23:30:00Z'),Date.parse('2026-11-05T01:30:00Z')], 280, 90, 16, 220);
+    return calls;
+  })()`,context);
+  assert.equal(result.length,4);
+  assert.deepEqual(Array.from(result,c=>[c.x,c.y,c.align]),[[90,202,'left'],[90,215,'left'],[264,202,'right'],[264,215,'right']]);
+  assert.ok(result.every(c=>c.text.length>0&&c.text.length<12));
+});
+
+test('analytics retains nonzero excluded-evidence warnings without zero-count implementation noise',async()=>{
+ const {context,nodes,text}=dashboard();const fixture=advancedFixture();
+ fixture.series[0].current.summary.invalid_timestamp_count=2;
+ fixture.incidents.invalid_duration_count=3;
+ context.api=async()=>fixture;
+ await vm.runInContext('loadAdvancedAnalytics()',context);
+ assert.match(text(nodes.get('analytics-summary')),/2 invalid timestamps excluded/);
+ assert.match(text(nodes.get('analytics-incidents')),/Excluded evidence:.*3 invalid spans/);
+});
+
+test('removing a device still requires confirmation naming saved history and cancellation sends no request', async () => {
+ const {context,nodes}=dashboard();seedDevices(context);let message='';const calls=[];
+ context.confirm=value=>{message=value;return false;};
+ context.fetch=async(path,options)=>{calls.push([path,options?.method]);return {ok:true,status:204};};
+ const row=nodes.get('targets').children[0];
+ await row.children[7].children[1].onclick();
+ assert.match(message,/^Remove .+ and its saved history\?$/);
+ assert.deepEqual(calls,[]);
+ assert.notEqual(row.children[7].children[1].disabled,true);
+});
+
+test('DNS help appears for relevant errors and clears on the next successful lookup', async () => {
+ const {context,nodes,text}=dashboard();context.document.getElementById('dns-domain').value='example.com';
+ context.api=async()=>({ok:false,domain:'example.com',code:'restricted_results',error:'Only non-public addresses were returned.',duration_ms:1,a:[],aaaa:[]});
+ await vm.runInContext('runDNSLookup({preventDefault(){}})',context);
+ assert.equal(nodes.get('dns-help').hidden,false);
+ assert.match(text(nodes.get('dns-error-help')),/withheld.*never contacted/);
+ assert.match(nodes.get('dns-status').textContent,/DNS lookup failed: Only non-public/);
+ context.api=async()=>({ok:true,domain:'example.com',duration_ms:2,a:['8.8.8.8'],aaaa:[]});
+ await vm.runInContext('runDNSLookup({preventDefault(){}})',context);
+ assert.equal(nodes.get('dns-help').hidden,true);
+ assert.equal(nodes.get('dns-help').open,false);
+ assert.equal(nodes.get('dns-error-help').textContent,'');
+ assert.doesNotMatch(nodes.get('dns-status').textContent,/failed/);
+});
+
+test('DNS validation errors and unsupported traceroute remain contextual and restore controls', async () => {
+ const {context,nodes}=dashboard();context.document.getElementById('dns-domain').value='localhost';
+ context.api=async()=>{throw new Error('Enter a public domain name.');};
+ await vm.runInContext('runDNSLookup({preventDefault(){}})',context);
+ assert.match(nodes.get('dns-status').textContent,/Enter a public domain name/);
+ assert.equal(nodes.get('dns-help').hidden,true);
+ assert.equal(nodes.get('dns-submit').disabled,false);
+ nodes.get('trace-ip').value='127.0.0.1';context.document.getElementById('trace-hops').value='12';
+ context.api=async()=>{throw new Error('This diagnostic currently requires Windows tracert.');};
+ await vm.runInContext('runTrace({preventDefault(){}})',context);
+ assert.match(nodes.get('trace-status').textContent,/requires Windows tracert/);
+ assert.equal(nodes.get('trace-submit').disabled,false);
+ assert.equal(nodes.get('trace-results').children.length,0);
+});
+
+test('traceroute interpretation appears only when the returned results need it', () => {
+ const {context,nodes,text}=dashboard();
+ vm.runInContext("renderTrace({status:'reached',destination:'127.0.0.1',duration_ms:1,message:'Destination reached.',hops:[{hop:1,ip:'127.0.0.1',rtts:['1 ms','1 ms','1 ms']}]})",context);
+ assert.match(text(nodes.get('trace-results')),/Reached: the destination replied/);
+ assert.doesNotMatch(text(nodes.get('trace-results')),/means no reply/);
+ vm.runInContext("renderTrace({status:'incomplete',destination:'127.0.0.1',duration_ms:1,message:'Not confirmed.',hops:[{hop:1,ip:null,rtts:['*','*','*']}]})",context);
+ assert.match(text(nodes.get('trace-results')),/means no reply, not proof a router is down/);
+ assert.doesNotMatch(text(nodes.get('trace-results')),/Reached:/);
+ vm.runInContext("renderTrace({status:'command_failure',destination:'127.0.0.1',duration_ms:1,message:'Command unavailable.',hops:[]})",context);
+ assert.equal(nodes.get('trace-results').children.length,0);
+});
+
 test('sparse timeline retains all 60 cycles and true multi-day gaps',()=>{
   const {context,nodes,text}=dashboard();
   vm.runInContext(`history=[...Array(60)].map((_,i)=>({id:i+1,checked_at:new Date(Date.UTC(2026,9,i<13?23:i<46?36:38,12,0,i)).toISOString(),icmp_check_status:i===8?'unknown':i%2?'success':'failure',tcp_check_status:'success'}));drawCheckTimeline();`,context);
@@ -1253,7 +1344,6 @@ test('sparse timeline retains all 60 cycles and true multi-day gaps',()=>{
   assert.equal(nodes.get('timeline-details').hidden,false);
 });
 
-
 test('dense groups remain bounded, nonoverlapping, chronological and lossless',()=>{
   const {context}=dashboard();
   const result=vm.runInContext(`(()=>{const rows=Array.from({length:180},(_,i)=>({id:i,checked_at:new Date(Date.UTC(2026,10,7,12,0,i)).toISOString()}));return timelineLayout(rows,timeBounds(rows),800);})()`,context);
@@ -1266,7 +1356,6 @@ test('dense groups remain bounded, nonoverlapping, chronological and lossless',(
   }
 });
 
-
 test('timezone offsets map equal instants together and DST overlap remains distinct',()=>{
   const {context}=dashboard();
   const result=vm.runInContext(`(()=>{const rows=['2026-11-01T01:30:00-04:00','2026-11-01T05:30:00Z','2026-11-01T01:30:00-05:00','2026-11-01T10:30:00+04:00'].map(checked_at=>({checked_at}));return timelineLayout(rows,timeBounds(rows),800);})()`,context);
@@ -1274,7 +1363,6 @@ test('timezone offsets map equal instants together and DST overlap remains disti
   assert.equal(result.groups[0].start,0);assert.equal(result.groups[1].start,1);
   assert.equal(result.groups[1].points[0].time-result.groups[0].points[0].time,3600000);
 });
-
 
 test('invalid and unzoned times remain accessible rather than silently disappearing',()=>{
   const {context,nodes,text}=dashboard();
@@ -1284,7 +1372,6 @@ test('invalid and unzoned times remain accessible rather than silently disappear
   assert.match(text(nodes.get('timeline-records')),/Unknown time.*Unknown.*Failure/);
   assert.equal(nodes.get('timeline-zoom').disabled,true);
 });
-
 
 test('record details support Escape, zoom, reset and independent mixed outcomes',()=>{
   const {context,nodes,text}=dashboard();
@@ -1303,7 +1390,6 @@ test('record details support Escape, zoom, reset and independent mixed outcomes'
   assert.match(text(nodes.get('timeline-records')),/Success.*Failure.*Failure.*Unknown/);
 });
 
-
 test('open record details survive refresh but clear on device switch and history failure',()=>{
   const {context,nodes}=dashboard();
   vm.runInContext(`selectedId=1;history=[{checked_at:'2026-11-07T12:00:00Z'}];drawCheckTimeline();`,context);
@@ -1316,7 +1402,6 @@ test('open record details survive refresh but clear on device switch and history
   assert.equal(nodes.get('timeline-details').hidden,true);
 });
 
-
 test('timeline range mirrors existing analytics controls and discloses truncated data',()=>{
   const {context,nodes}=dashboard();
   vm.runInContext(`history=[{checked_at:'2026-11-07T12:00:00Z'}];rangeSummary={truncated:true,summary:{record_count:2500}};drawCheckTimeline();`,context);
@@ -1326,7 +1411,6 @@ test('timeline range mirrors existing analytics controls and discloses truncated
   assert.equal(vm.runInContext('historyRange',context),'7d');
   assert.equal(nodes.get('timeline-details').hidden,true);
 });
-
 
 test('quiet observation rails retain every mixed state without visible symbols or counts',()=>{
  const {context,nodes,text}=dashboard();
@@ -1341,7 +1425,6 @@ test('quiet observation rails retain every mixed state without visible symbols o
  mark.listeners.click();assert.equal(mark.attributes['aria-expanded'],'true');
  nodes.get('timeline-close').listeners.click();assert.equal(mark.attributes['aria-expanded'],'false');
 });
-
 
 test('rare unknown records remain visible and every dense record is reachable through compact pages',()=>{
  const {context,nodes,text}=dashboard();
@@ -1363,7 +1446,6 @@ test('rare unknown records remain visible and every dense record is reachable th
  nodes.get('timeline-page-prev').listeners.click();assert.equal(nodes.get('timeline-page-status').textContent,'96–100 of 103');
 });
 
-
 test('each protocol rail has one tab stop with arrow and Home/End navigation',()=>{
  const {context,nodes}=dashboard();
  vm.runInContext(`history=[0,3600,7200].map(s=>({checked_at:new Date(Date.UTC(2026,10,7)+s*1000).toISOString()}));drawCheckTimeline();`,context);
@@ -1377,7 +1459,6 @@ test('each protocol rail has one tab stop with arrow and Home/End navigation',()
  assert.equal(prevented,3);
 });
 
-
 test('background refresh restores the rendered summary without replacing focused records',()=>{
  const {context,nodes}=dashboard();
  vm.runInContext(`selectedId=1;history=[{checked_at:'2026-11-07T12:00:00Z',icmp_check_status:'unknown'}];drawCheckTimeline();`,context);
@@ -1390,7 +1471,6 @@ test('background refresh restores the rendered summary without replacing focused
 });
 
 
-
 test('cycle denominator follows the selected range total rather than the latest-60 limit',()=>{
  const {context,nodes}=dashboard();
  vm.runInContext(`history=Array.from({length:60},(_,i)=>({checked_at:new Date(Date.UTC(2026,10,7,12,0,i)).toISOString()}));historyRange='1h';rangeSummary={summary:{record_count:60},truncated:false};drawCheckTimeline();`,context);
@@ -1401,13 +1481,11 @@ test('cycle denominator follows the selected range total rather than the latest-
  assert.match(nodes.get('timeline-status').textContent,/^0\/0 cycles/);
 });
 
-
 test('capped history reports returned cycles over all records in the selected range',()=>{
  const {context,nodes}=dashboard();
  vm.runInContext(`history=Array.from({length:2000},(_,i)=>({checked_at:new Date(Date.UTC(2026,10,7,12,0,i)).toISOString()}));historyRange='6h';rangeSummary={summary:{record_count:3500},truncated:true};drawCheckTimeline();`,context);
  assert.match(nodes.get('timeline-status').textContent,/^2000\/3500 cycles.*Newest 2000 loaded/);
 });
-
 
 test('open details keep the displayed numerator but update the range total on refresh',()=>{
  const {context,nodes}=dashboard();
@@ -1415,4 +1493,61 @@ test('open details keep the displayed numerator but update the range total on re
  nodes.get('check-timeline').children[0].children[1].children[0].listeners.click();
  vm.runInContext(`history.push({checked_at:'2026-11-07T12:01:00Z'});rangeSummary.summary.record_count=2;drawCheckTimeline();`,context);
  assert.match(nodes.get('timeline-status').textContent,/^1\/2 cycles/);
+});
+
+
+test('discovery preview matches usable hosts for /27, /30, /31 and /32',()=>{
+ const {context}=dashboard();
+ for(const [cidr,count,first,last] of [['10.0.0.0/27',30,'10.0.0.1','10.0.0.30'],['192.168.1.0/30',2,'192.168.1.1','192.168.1.2'],['172.16.0.0/31',2,'172.16.0.0','172.16.0.1'],['127.0.0.1/32',1,'127.0.0.1','127.0.0.1']]){
+  const scope=vm.runInContext(`discoveryScope('${cidr}')`,context);assert.equal(scope.count,count);assert.equal(scope.first,first);assert.equal(scope.last,last);
+ }
+ for(const cidr of ['8.8.8.0/30','169.254.1.0/30','localhost/32','192.168.1.1/30','10.0.0.0/26','10.00.0.0/30','::1/128'])assert.throws(()=>vm.runInContext(`discoveryScope('${cidr}')`,context));
+});
+
+test('Escape or changing a pending CIDR cancels consent without posting',async()=>{
+ const {context,nodes}=dashboard();let posts=0;context.api=async()=>{posts++;};
+ nodes.get('discovery-cidr').value='127.0.0.1/32';vm.runInContext('startDiscovery({preventDefault(){}})',context);
+ let prevented=false;nodes.get('discovery-confirmation').listeners.cancel({preventDefault(){prevented=true;}});
+ assert.equal(prevented,true);assert.equal(nodes.get('discovery-confirmation').open,false);
+ await vm.runInContext('confirmDiscovery()',context);assert.equal(posts,0);
+ vm.runInContext('startDiscovery({preventDefault(){}})',context);nodes.get('discovery-cidr').value='10.0.0.0/30';
+ await vm.runInContext('confirmDiscovery()',context);assert.equal(posts,0);assert.match(nodes.get('discovery-progress').textContent,/Network changed/);
+ vm.runInContext('startDiscovery({preventDefault(){}})',context);nodes.get('discovery-cidr').listeners.input();
+ assert.equal(nodes.get('discovery-confirmation').open,false);await vm.runInContext('confirmDiscovery()',context);assert.equal(posts,0);
+});
+
+test('failed discovery submissions require a new explicit confirmation',async()=>{
+ const {context,nodes}=dashboard();let posts=0;
+ nodes.get('discovery-cidr').value='127.0.0.1/32';context.api=async()=>{posts++;throw new Error('Rate limit reached');};
+ vm.runInContext('startDiscovery({preventDefault(){}})',context);await vm.runInContext('confirmDiscovery()',context);
+ assert.equal(posts,1);assert.equal(nodes.get('discovery-confirm-scan').disabled,false);assert.equal(nodes.get('discovery-start').disabled,false);
+ await vm.runInContext('confirmDiscovery()',context);assert.equal(posts,1);
+ vm.runInContext('startDiscovery({preventDefault(){}})',context);assert.equal(nodes.get('discovery-confirmation').open,true);assert.equal(posts,1);
+});
+
+
+test('discovery confirmation wraps Tab and Shift+Tab between its actions',()=>{
+ const {context,nodes}=dashboard();let prevented=0;
+ context.document.activeElement=nodes.get('discovery-confirm-scan');
+ nodes.get('discovery-confirmation').listeners.keydown({key:'Tab',shiftKey:false,preventDefault(){prevented++;}});
+ assert.equal(nodes.get('discovery-confirm-cancel').focuses.length,1);
+ context.document.activeElement=nodes.get('discovery-confirm-cancel');
+ nodes.get('discovery-confirmation').listeners.keydown({key:'Tab',shiftKey:true,preventDefault(){prevented++;}});
+ assert.equal(nodes.get('discovery-confirm-scan').focuses.length,1);assert.equal(prevented,2);
+});
+
+test('sidebar navigation preserves native anchors, announces location and focuses destination',()=>{
+ const callbacks={},sections=new Map();let prevented=false;
+ const links=['#overview','#devices','#network-discovery'].map(href=>{
+  const classes=new Set();return {href,attributes:{href},classes,handlers:{},classList:{toggle(name,on){on?classes.add(name):classes.delete(name);}},getAttribute(name){return this.attributes[name];},setAttribute(name,value){this.attributes[name]=value;},removeAttribute(name){delete this.attributes[name];},addEventListener(name,handler){this.handlers[name]=handler;}};
+ });
+ for(const link of links)sections.set(link.href,{attributes:{},focused:false,setAttribute(name,value){this.attributes[name]=value;},focus(){this.focused=true;}});
+ const location={hash:''};const context=vm.createContext({document:{querySelectorAll(){return links;},querySelector(selector){return sections.get(selector);}},window:{addEventListener(name,handler){callbacks[name]=handler;}},location});
+ vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../static/interface.js'),'utf8'),context);
+ assert.equal(links[0].attributes['aria-current'],'location');
+ location.hash='#network-discovery';callbacks.hashchange();
+ assert.equal(links[0].attributes['aria-current'],undefined);assert.equal(links[2].attributes['aria-current'],'location');
+ links[1].handlers.click({preventDefault(){prevented=true;}});
+ assert.equal(sections.get('#devices').focused,true);assert.equal(sections.get('#devices').attributes.tabindex,'-1');
+ assert.equal(links[1].getAttribute('href'),'#devices');assert.equal(prevented,false);
 });

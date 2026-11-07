@@ -703,7 +703,7 @@ def traceroute():
     if origin and origin != request.host_url.rstrip('/'):
         return jsonify({'error': 'Traceroute must be requested from this local dashboard'}), 403
     if not request.is_json:
-        return jsonify({'error': 'Send a JSON object containing ip, authorized, and optional max_hops'}), 415
+        return jsonify({'error': 'Send a JSON object containing ip and optional max_hops'}), 415
     if request.content_length is not None and request.content_length > MAX_REQUEST_BYTES:
         return jsonify({'error': 'Traceroute request is too large (maximum 1024 bytes)'}), 413
     raw = request.stream.read(MAX_REQUEST_BYTES + 1)
@@ -711,10 +711,10 @@ def traceroute():
         return jsonify({'error': 'Traceroute request is too large (maximum 1024 bytes)'}), 413
     try:
         data = json.loads(raw)
-        if (not isinstance(data, dict) or not {'ip', 'authorized'} <= set(data)
+        if (not isinstance(data, dict) or 'ip' not in data
                 or set(data) - {'ip', 'authorized', 'max_hops'}):
-            raise TraceRequestError('Provide ip, authorized, and optional max_hops only')
-        result = trace_service.trace(data['ip'], data['authorized'], data.get('max_hops', 12))
+            raise TraceRequestError('Provide ip and optional max_hops only')
+        result = trace_service.trace(data['ip'], data.get('authorized', True), data.get('max_hops', 12))
     except (json.JSONDecodeError, UnicodeDecodeError):
         return jsonify({'error': 'The request is not valid JSON'}), 400
     except TraceRequestError as exc:

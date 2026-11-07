@@ -22,7 +22,7 @@ class NetworkMapTests(unittest.TestCase):
             self.assertIn('id="network-map"',html)
             self.assertIn('href="#network-map"',html)
             self.assertIn('network-map.js',html)
-            self.assertIn('No verified network links',html)
+            self.assertIn('Connections are unverified',html)
             self.assertEqual(self.client.get('/api/targets').status_code,200)
             inventory=self.client.get('/api/discovery/inventory?limit=200')
             self.assertEqual(inventory.json['observations'][0]['classification'],'unresponsive')
@@ -49,5 +49,5 @@ class NetworkMapTests(unittest.TestCase):
         self.assertEqual(template.attributes['network-map-details']['tabindex'],'-1')
         for key in ('network-map-zoom-in','network-map-zoom-out','network-map-reset','network-map-refresh'):
             self.assertEqual(template.attributes[key]['type'],'button')
-        self.assertIn('display only',html)
-        self.assertIn('No probes run when opening this map',html)
+        self.assertIn('Address groups are for display, not verified subnets.',html)
+        self.assertIn('Pan: drag or arrow keys.',html)

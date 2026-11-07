@@ -74,7 +74,7 @@ class TraceExecutionTests(unittest.TestCase):
     def test_strict_command_and_timeout_no_shell_or_dns(self):
         service=trace.TraceDiagnostics(netscope.validate_ip)
         with patch.object(trace.platform,'system',return_value='Windows'),patch.object(trace.subprocess,'run',return_value=subprocess.CompletedProcess([],0,ONE,'')) as run:
-            result=service.trace('127.0.0.1',True,20)
+            result=service.trace('127.0.0.1',max_hops=20)
         command=run.call_args.args[0]
         self.assertTrue(command[0].lower().endswith('system32\\tracert.exe'))
         self.assertEqual(command[1:],['-d','-4','-h','20','-w','500','127.0.0.1'])
@@ -154,7 +154,7 @@ class TraceEndpointTests(unittest.TestCase):
     tearDown=test_app.ApplicationTests.tearDown
 
     def post(self,**options):
-        return self.client.post('/api/traceroute',json={'ip':'127.0.0.1','authorized':True,'max_hops':12},**options)
+        return self.client.post('/api/traceroute',json={'ip':'127.0.0.1','max_hops':12},**options)
 
     def test_endpoint_does_not_alter_monitoring_dns_or_sqlite(self):
         before=self.client.get('/api/targets').json
@@ -173,9 +173,9 @@ class TraceEndpointTests(unittest.TestCase):
             self.assertEqual(self.post(headers={'Host':'attacker.example'}).status_code,403)
             run.assert_not_called()
 
-    def test_bad_requests_and_missing_authorization_do_not_execute(self):
+    def test_bad_requests_and_explicit_declines_do_not_execute(self):
         with patch.object(trace.subprocess,'run') as run:
-            for body in ({},[],None,{'ip':'127.0.0.1'}, {'ip':'127.0.0.1','authorized':True,'command':'whoami'}, {'ip':'8.8.8.8','authorized':True}):
+            for body in ({},[],None, {'ip':'127.0.0.1','authorized':True,'command':'whoami'}, {'ip':'8.8.8.8','authorized':True}):
                 with self.subTest(body=body):
                     self.assertEqual(self.client.post('/api/traceroute',data=json.dumps(body),content_type='application/json').status_code,400)
             self.assertEqual(self.client.post('/api/traceroute',json={'ip':'127.0.0.1','authorized':False}).status_code,403)
@@ -183,3 +183,25 @@ class TraceEndpointTests(unittest.TestCase):
             self.assertEqual(self.client.post('/api/traceroute',data='x=y').status_code,415)
             self.assertEqual(self.client.post('/api/traceroute',json={'ip':'a'*2000,'authorized':True}).status_code,413)
             run.assert_not_called()
+
+
+class DirectTraceEndpointTests(unittest.TestCase):
+    setUp=test_app.ApplicationTests.setUp
+    tearDown=test_app.ApplicationTests.tearDown
+
+    def test_direct_requests_allow_only_literal_private_and_loopback_destinations(self):
+        for ip in ('127.0.0.1', '10.0.0.1', '172.16.0.1', '192.168.1.1'):
+            with self.subTest(ip=ip), patch.object(netscope, 'trace_service', trace.TraceDiagnostics(netscope.validate_ip)), patch.object(trace.platform, 'system', return_value='Windows'), patch.object(trace.subprocess, 'run', return_value=subprocess.CompletedProcess([],0,ONE,'')) as run:
+                response=self.client.post('/api/traceroute', json={'ip':ip,'max_hops':4})
+                self.assertEqual(response.status_code,200)
+                self.assertEqual(run.call_args.args[0][-1],ip)
+        with patch.object(trace.subprocess, 'run') as run:
+            for ip in ('8.8.8.8', '169.254.169.254', 'example.com', '::1', '127.0.0.1 & whoami'):
+                self.assertEqual(self.client.post('/api/traceroute', json={'ip':ip}).status_code,400)
+            run.assert_not_called()
+
+    def test_legacy_explicit_consent_remains_compatible_without_being_required(self):
+        with patch.object(netscope, 'trace_service', trace.TraceDiagnostics(netscope.validate_ip)), patch.object(trace.platform, 'system', return_value='Windows'), patch.object(trace.subprocess, 'run', return_value=subprocess.CompletedProcess([],0,ONE,'')) as run:
+            self.assertEqual(self.client.post('/api/traceroute', json={'ip':'127.0.0.1','authorized':True}).status_code,200)
+            self.assertEqual(self.client.post('/api/traceroute', json={'ip':'127.0.0.1','authorized':False}).status_code,403)
+            self.assertEqual(run.call_count,1)

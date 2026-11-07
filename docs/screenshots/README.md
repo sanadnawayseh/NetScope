@@ -1,63 +1,65 @@
 # Screenshot gallery and privacy review
 
-Capture date: 29 October 2026. Source checkpoint: `5b3db02ff8d3493b3729985951cfeb7e211c4f8d`.
-
-**Historical comparison update (3 November 2026):** `09-device-comparison.png` now shows the UI from `5b29243f2ea0b4f2409f5895bbee9999ff37f98d`, with separate labeled ICMP/TCP tracks, grouped statistics, and explicit success/failure/unknown indicators. This capture uses simulated observations in a separate disposable database (four generic loopback targets, 700 observations; two devices shown), including partial loss, TCP failures, unknown checks, bounded RTT and collection gaps. It was captured at a requested 1600 × 1200 desktop viewport and cropped to the comparison panel. The simulated-demo title is the only visible demo-specific template addition. The image was individually privacy-reviewed and converted from browser JPEG to RGB PNG without resizing or pixel edits; only IHDR/IDAT/IEND chunks remain. No real inventory or production database was accessed. The original capture date, fixture and viewport details below apply to the other images.
+Capture date: **7 November 2026**. Source: the UI changes published alongside this gallery, based on `a236aeca464c7241a86b9cee2a385370c081261d`.
 
 ## Provenance and scope
 
-These are browser captures of the current NetScope HTML/CSS/JavaScript and real API/analytics/report rendering, using **simulated demo data in a newly created disposable SQLite database**. They are not screenshots of the owner's real inventory or evidence of real network measurements/discovery. All device addresses are loopback (`127.0.0.1`–`127.0.0.4`); `example.com` is a reserved documentation domain entered into the DNS form without resolving it.
+All 13 images are real browser captures of NetScope’s current HTML/CSS/JavaScript and API rendering using **simulated data in a new disposable SQLite database**. They are demonstrations, not live network measurements or evidence of manual acceptance. All displayed addresses are loopback (`127.0.0.1`–`127.0.0.6`); generic device labels begin with “Demo.” `example.com` is a reserved documentation-domain input and was not resolved.
 
-The fixture inserted 525 simulated observations for three targets, including exact/bounded RTT, loss, TCP failures, a collection gap, and recovery. The existing persistence/incident engine produced the incident transitions and notification events. Demo acknowledgement timestamps were made consistent with the simulated historical lifecycle; read state was deliberately mixed. Four discovery inventory rows were seeded, with no scan run. The demo server ran separately on loopback port 5055, without the background monitor; all non-GET actions were blocked. Its template response added the top DEMO DATA badge and replaced example LAN input placeholders with loopback examples. Production source files were not changed.
+The fixture contains four monitored devices and 1,385 generated observations spanning about twelve hours, including exact/bounded RTT, partial loss, independent TCP failures, collection errors, and a twenty-minute gap. The unchanged incident evaluator produced one resolved TCP incident and one active incident; the latter was acknowledged with a clearly simulated note. Two engine-generated notification events were selected for this demo fixture, with mixed read state; this is fixture setup, not a product retention policy. Three discovery inventory rows were seeded without probing.
 
-A PDF was generated from this demo data through the real export UI; the image shows the app's download-started state, not a reviewed PDF page or proof of a Windows download dialog. DNS and traceroute are shown before execution. No external DNS, traceroute, discovery, router or LAN access occurred. No uptime was fabricated: availability values are the app's sampled-check statistics.
+The server ran separately on loopback, without the automatic monitor. All POST requests, subprocess probes, DNS resolution and outbound connection helpers were blocked. The only demo-specific template change was an invisible simulated-demo browser title. The production UI was otherwise rendered unchanged. The real monitoring database and private inventory were not opened or checksummed.
+
+PDF export used the real read-only report endpoint and browser download flow over simulated data. The capture shows download-started status, not visually accepted PDF pages or a verified Windows download dialog. DNS, traceroute, discovery and enrollment were not executed for these captures; the confirmation dialog was cancelled.
 
 ## Capture and review method
 
-- Same browser session, current dark theme and a requested 1440 × 1080 viewport throughout. Content-only region captures exclude browser chrome, account controls, bookmarks and desktop. Actual output sizes differ because panels were cropped to their content; full-viewport capture behavior is not evidence of responsive-layout acceptance.
-- Browser JPEG captures were decoded and saved as RGB PNGs without resizing, retouching or invented chart values. Final PNGs contain only IHDR/IDAT/IEND chunks: no EXIF, XMP, textual metadata or embedded paths.
-- Each final image was opened and reviewed individually. Visible text was checked for personal hostnames, real LAN addresses, usernames, Windows account names, filesystem paths, bookmarks, email addresses and credentials. Rendered-text checks complemented visual review. Only generic labels, loopback addresses, documentation domain input and demo timestamps are present.
-- No pixel redaction was needed. The incident capture was regenerated after correcting a synthetic acknowledgement timestamp and resetting list scroll. Notifications were regenerated so both Read and Unread appear in the visible portion. Export framing was tightened to avoid a partial unrelated line. The hero is an intentional copy of the dashboard image.
-- The real database checksum remained unchanged. Disposable database, fixture script, raw captures, text snapshots and test-only artifacts remain under ignored `tmp/`; they are excluded from the public screenshot set. Existing legacy screenshots remain ignored.
+- One browser session and the same requested **1440 × 1080** desktop viewport throughout. Content crops exclude browser chrome, accounts and the desktop. Actual output dimensions appear below; cropped/native output sizes do not establish responsive acceptance.
+- Browser JPEGs were decoded to RGB PNG without resizing, retouching, redaction or invented chart values. Pixel equality was checked against each decoded capture. Final PNG chunks are only IHDR/IDAT/IEND: no EXIF, XMP, text chunks or embedded paths.
+- Every final PNG was opened individually and checked for readable text, whole component edges, settled data, accurate descriptions and privacy. Early crops with edge shifts, partial scroll rows or a loading label were rejected and regenerated. The hero intentionally duplicates the dashboard.
+- Only generic labels, loopback addresses, documentation input and generated timestamps appear. No usernames, personal hostnames, real LAN inventory, credentials, emails or filesystem paths were found.
+- The fixed fixture naturally ages during capture. Stale labels are retained honestly; stored outcomes do not imply current reachability. Range counts can decrease as the moving time window advances.
+- Disposable databases, logs, fixture scripts, raw JPEGs, downloaded reports and review artifacts remain under ignored `tmp/`; only these reviewed PNGs and documentation are published.
 
 ## Per-image review
 
-PASS means no personal/sensitive content was found in this review; it is not a general application security or manual acceptance certification.
+**PASS** means the image passed this visual/privacy review. It is not a security certification, real-network test or manual acceptance result.
 
-| File | Feature shown | Size | Privacy review |
+| File | Feature shown | Size | Review |
 | --- | --- | --- | --- |
-| [00-readme-hero.png](00-readme-hero.png) | README hero; same reviewed capture as dashboard | 1425 × 922 | PASS |
-| [01-dashboard-overview.png](01-dashboard-overview.png) | Three loopback devices; independent ICMP/TCP, summary RTT, loss and stale timestamps | 1425 × 922 | PASS |
-| [02-device-history.png](02-device-history.png) | Six-hour exact RTT/loss charts, bounded-data and collection gaps, sampled availability timeline | 1207 × 1092 | PASS |
-| [03-incidents.png](03-incidents.png) | Two resolved incidents and one acknowledged active incident with filters | 1207 × 768 | PASS |
-| [04-incident-detail.png](04-incident-detail.png) | Resolved lifecycle, acknowledgement note, trigger thresholds and verified sampled recovery | 1174 × 220 | PASS |
-| [05-notifications.png](05-notifications.png) | Persistent in-app opened/resolved events, Read/Unread states and incident links | 1207 × 615 | PASS |
-| [06-discovery-inventory.png](06-discovery-inventory.png) | Simulated responding/unresponsive/unknown loopback inventory; consent unchecked; no scan | 1207 × 764 | PASS |
-| [07-network-map.png](07-network-map.png) | Unconnected stored inventory, selection details, stale/unknown states and no invented links | 1207 × 776 | PASS |
-| [08-analytics-overview.png](08-analytics-overview.png) | Mean/median/p95/p99, loss distribution, sampled availability and incident statistics | 1222 × 1937 | PASS |
-| [09-device-comparison.png](09-device-comparison.png) | Two-device RTT/loss comparison, separate ICMP/TCP sampled-availability tracks, unknown observations and gaps | 1367 × 857 | PASS |
-| [10-reporting-export.png](10-reporting-export.png) | PDF export controls and real demo-data download-started status | 1222 × 483 | PASS |
-| [11-diagnostics.png](11-diagnostics.png) | Safe example.com/loopback inputs; DNS/traceroute not executed | 1222 × 745 | PASS |
+| [00-readme-hero.png](00-readme-hero.png) | README hero; identical to the reviewed dashboard capture. | 1440 × 683 | PASS |
+| [01-dashboard-overview.png](01-dashboard-overview.png) | Four generic loopback devices; blue navigation/actions, independent ICMP/TCP, unknown results and truthful stale timestamps. | 1440 × 683 | PASS |
+| [02-device-history.png](02-device-history.png) | Six-hour RTT/loss charts, bounded RTT and real fixture gaps; quiet ICMP/TCP observation tracks and the matching displayed/range cycle counter. | 1149 × 1180 | PASS |
+| [03-incidents.png](03-incidents.png) | All-state filters with one acknowledged active TCP incident and one resolved sampled recovery. | 1145 × 530 | PASS |
+| [04-incident-detail.png](04-incident-detail.png) | Resolved TCP lifecycle, original trigger thresholds and verified sampled recovery; no acknowledgement note is claimed for this resolved fixture. | 1095 × 166 | PASS |
+| [05-notifications.png](05-notifications.png) | Two engine-generated demo events, one Read and one Unread; incident links and read controls, with complete visible rows. | 1145 × 510 | PASS |
+| [06-discovery-inventory.png](06-discovery-inventory.png) | Three seeded responding/unresponsive/unknown loopback observations, deliberate enrollment control, and Start discovery; no persistent checkbox or scan. | 1145 × 654 | PASS |
+| [07-network-map.png](07-network-map.png) | Six unconnected stored addresses; selected discovery-only unknown/stale observation, TCP not checked, and no invented links. | 1145 × 774 | PASS |
+| [08-analytics-overview.png](08-analytics-overview.png) | Exact RTT statistics/distributions, packet loss, separate sampled availability, preceding-window trends and incident statistics. | 1145 × 2050 | PASS |
+| [09-device-comparison.png](09-device-comparison.png) | Two-device six-hour RTT/loss comparison, separate ICMP/TCP tracks, unknown checks and a collection gap. | 1145 × 884 | PASS |
+| [10-reporting-export.png](10-reporting-export.png) | PDF export controls and actual simulated-data download-started status; settled comparison context, no loading state. | 1145 × 650 | PASS |
+| [11-diagnostics.png](11-diagnostics.png) | DNS Lookup and direct Run traceroute controls with reserved example.com/loopback inputs; neither diagnostic was executed. | 1145 × 335 | PASS |
+| [12-discovery-confirmation.png](12-discovery-confirmation.png) | Native per-scan confirmation for 127.0.0.0/29: six usable hosts, exact address range, Cancel and Confirm & Scan; cancelled without a scan. | 1425 × 866 | PASS |
 
 ## Limitations
 
-- All measurements and inventory are simulated; a successful rendered demo does not complete the pending real-browser/manual acceptance matrix.
-- Map freshness is truthful: fixed demo observations aged into stale state during capture. No topology edges are claimed.
-- Preceding-window trends remain N/A where the fixture lacks five eligible samples in each window. Unknown, bounded and missing RTT remain gaps rather than invented points.
-- Panels with built-in scrolling retain that behavior; the notification image intentionally shows a viewport of the event list. Full records remain in the disposable database.
-- Diagnostics results and visual PDF pagination are not captured. No real discovery consent/progress or scan result is claimed.
+- Screenshots establish rendered demo appearance only. Real Windows startup/locale behavior, newly changed authorization flows against an authorized real network, full responsive/assistive-technology acceptance and final PDF/download acceptance remain separate manual gates.
+- Sampled availability is not continuous uptime. Unknown, bounded and missing samples are not fabricated successes or failures; map connections remain unverified.
+- The complete automated run used temporary databases and mocked operations: **269 Python passed, one live-loopback case skipped; 118 frontend passed**. No unmocked operation was attempted. See the [release record](../RELEASE_CHECKLIST.md#ui-and-screenshot-refresh--7-november-2026) and [manual acceptance limits](../FINAL_ACCEPTANCE.md).
+- All twelve previous image files were outdated after the palette, navigation and interaction changes and were replaced under their existing names. One confirmation-dialog image was added; no genuinely current legacy image was discarded.
 
-## Reviewed image checksums (SHA256)
+## Reviewed SHA256 checksums
 
-- `00-readme-hero.png`: `2f549ff37693828a808652b14221b6b76b78cc8a101135dd00b085e2112ab702`
-- `01-dashboard-overview.png`: `2f549ff37693828a808652b14221b6b76b78cc8a101135dd00b085e2112ab702`
-- `02-device-history.png`: `a4bb2d088f028de4481c5516d2b00347da40b54b32f9c022812ff36bff44198a`
-- `03-incidents.png`: `e67e214fef82f810f16ad1d7ad6a0dd47460e20f582326b606b1d71f9872c5e9`
-- `04-incident-detail.png`: `967572778598475627a0941d415db00ea5b433ac010bd4e3355e516fbb581133`
-- `05-notifications.png`: `a944f23e0dbdeb69a214de8663bcbb3a89b2b73696e58228fcd419afb4381cc5`
-- `06-discovery-inventory.png`: `6b0efabb89bc1eca3c308bd74c92a17c18af81fcdbbd9d87856155969a09b89c`
-- `07-network-map.png`: `d6ff443ebd9ba68fe1cfb5b08c9412f81bdcb897e6f81fa6eaafdec6e4a2c64d`
-- `08-analytics-overview.png`: `edfc4ec6c8571d89dbd579ada35fdc0735d3135eb37f7a4ba8398d9e6fe7ad20`
-- `09-device-comparison.png`: `044883e806af47cc6c54cc6977f2874b031a9c13bbd8124c257fc297de2033bf`
-- `10-reporting-export.png`: `fb99fbe2d76c9ee27c1b15c14aadc1473f955127170320372f58923de904c934`
-- `11-diagnostics.png`: `dda4f4b23b2ab59b206567a87505c4f51df35161df51abaaaa7a3f82d5d7719c`
+- `00-readme-hero.png`: `7b22ec597035cd7b86a864d18254570404fc06999df013ab67310240e75c3d9f`
+- `01-dashboard-overview.png`: `7b22ec597035cd7b86a864d18254570404fc06999df013ab67310240e75c3d9f`
+- `02-device-history.png`: `d47c2da5cc568a5795f74096cc4ba1d0a8da5be1c461abbf293d51367de23580`
+- `03-incidents.png`: `fa9875dada1e236259192fbc48b24611c8613aee302e4cd13892d2a90c8c0974`
+- `04-incident-detail.png`: `afa58980d3b1f6e697d99cd5cd3d6ea8b9730ef15c75152392d6899964f44413`
+- `05-notifications.png`: `505877a8781661d9c1655bd7f7964e550187e3ca9daccdf40d7768060722892a`
+- `06-discovery-inventory.png`: `96dbd2723cdb4e0bdc9dd5867e933e06814b78bad7eb1fd92f94175d22f0b949`
+- `07-network-map.png`: `ad04d2ff82f4e481e6697b6efb53a1bc7bc3d09603f04101de7ebdcaca7a8e13`
+- `08-analytics-overview.png`: `9791e77bc27c3311d4941770488818f1486fa71b9c363de31c9694ca4fd35c10`
+- `09-device-comparison.png`: `aa7dd6ae3b95e966e4c41346d852061f4b42fdb3bf2ed1f9946bc7fc688e9e78`
+- `10-reporting-export.png`: `4b45a3486d832257ccea499a0ab3a0488bd97e1980063074b5475abd000c168a`
+- `11-diagnostics.png`: `d4b2f61f757042f853d9205e8bc747884ff687bca9c1db922126358a12a9f09d`
+- `12-discovery-confirmation.png`: `2e8463477e7b9427323aa08355d6606723c7228c331082c61ab22fcb42d6bc9e`

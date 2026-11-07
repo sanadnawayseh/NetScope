@@ -4,7 +4,7 @@ function reportSelectedIds() {
 }
 function syncReportSelection() {
   const ids=reportSelectedIds();
-  $('report-selection').textContent=ids.length?`Export devices: ${ids.map(id=>devices.find(d=>d.id===id)?.name||'#'+id).join(', ')}. Use the existing comparison checkboxes or inspector to change devices.`:'Select a monitored device in the inspector or comparison controls before exporting.';
+  $('report-selection').textContent=ids.length?`Export devices: ${ids.map(id=>devices.find(d=>d.id===id)?.name||'#'+id).join(', ')}`:'Select a device or comparison before exporting.';
   const custom=$('report-range').value==='custom';$('report-custom-dates').hidden=!custom;
   $('report-start').required=custom;$('report-end').required=custom;
 }
@@ -27,7 +27,7 @@ async function exportReport(event) {
     query.push('start='+encodeURIComponent(start.toISOString()),'end='+encodeURIComponent(end.toISOString()));
   }else query.push('range='+encodeURIComponent($('report-range').value||historyRange||'24h'));
   reportBusy=true;$('report-submit').disabled=true;$('report-submit').textContent='Generating…';
-  $('report-status').textContent='Generating a local report (up to 20 seconds). No scan or probe is started.';
+  $('report-status').textContent='Generating report…';
   try {
     const response=await fetch(`/api/reports.${format}?${query.join('&')}`,{signal:AbortSignal.timeout(25000),headers:{Accept:format==='pdf'?'application/pdf':'text/csv'}});
     if(!response.ok){let body={};try{body=await response.json();}catch{}throw new Error(body.error||`Report failed (${response.status})`);}
@@ -38,7 +38,7 @@ async function exportReport(event) {
     const url=URL.createObjectURL(blob),link=document.createElement('a');
     try {link.href=url;link.download=`netscope-report.${format}`;document.body.append(link);link.click();}
     finally{link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
-    $('report-status').textContent='Report download started. It contains private monitoring data; store and share it deliberately.';
+    $('report-status').textContent='Report download started. Contains private monitoring data.';
   }catch(error){$('report-status').textContent=`Could not download report: ${error.message}. No automatic retry was made.`;}
   finally{reportBusy=false;$('report-submit').disabled=false;$('report-submit').textContent='Download report';}
 }

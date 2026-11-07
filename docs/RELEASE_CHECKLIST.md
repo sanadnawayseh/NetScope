@@ -86,3 +86,16 @@ These create disposable simulated fixtures and do not run network discovery or u
 ```
 
 For normal development checks, use the Automated checks section above. [AUDIT.md](../AUDIT.md) is a historical source/behavior review, not current release certification.
+
+
+## UI and screenshot refresh — 7 November 2026
+
+The near-black/blue UI, shorter helper text, quiet per-device history, range-cycle counter, direct restricted traceroute and per-scan discovery dialog were reviewed together. No monitoring schedule, measurement schema or incident calculation changed. The current traceroute API no longer requires a consent field; discovery still requires explicit `authorized:true` on every submission.
+
+- Python: **270 discovered, 269 passed, 1 skipped**, 77.083 seconds. The existing live-loopback integration test was intentionally skipped to keep this run mocked-only. Process/network guards recorded **zero unmocked attempts**. Temporary default DB/log locations and test fixtures were used; the real database was not accessed.
+- Frontend: **118 passed**, zero failed/cancelled/skipped, 1735.2287 ms. Coverage includes sidebar anchors/focus, discovery confirmation and cancellation, duplicate prevention, CIDR host counts, direct restricted traceroute, sparse/dense history, unknowns/timezones, paging and range counts.
+- All **seven** application JavaScript files and the frontend test file passed `node --check`; whitespace checks passed. Template checks are included in the Python suite.
+- All 12 existing gallery images were refreshed and a discovery-confirmation image added. Every final PNG was individually inspected, metadata stripped and decoded pixels verified. See [gallery provenance](screenshots/README.md).
+- No real scan, external DNS lookup, traceroute or monitoring batch was performed. Report generation used only the disposable demo. Rendered screenshots are not manual acceptance evidence.
+
+The standard full-suite command above includes the live-loopback case. For this mocked-only run, the unittest loader used `unittest.skip` on `ApplicationTests.test_real_loopback_checks_and_persistence`, then ran discovery with `subprocess.run`, `socket.create_connection` and `socket.getaddrinfo` guarded by failing mocks; individual tests installed their controlled mocks as usual. This is an explicit testing limitation, not a passing live-network result. Earlier dated verification records remain historical.

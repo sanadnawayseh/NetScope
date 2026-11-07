@@ -140,3 +140,10 @@ No commit or push was performed. Only the numeric fix, its regression test and t
 ## Portfolio preview decision — 29 October 2026
 
 Publication audit: **GO for a source-only portfolio preview with the README limitations disclosed**, separate from the unchanged NO-GO for complete manual acceptance. Full suites passed: 261 Python tests in 65.687 s and 91 frontend tests in 1270.7163 ms. Dependency/syntax checks passed; no matching secrets or private runtime artifacts were found in tracked content or reviewed reachable history. Old loopback screenshots are excluded from the current tree but remain in historical commits. See the release checklist for scope and remaining limitations. No new network discovery or manual Group C result is claimed.
+
+
+## UI refresh verification — 7 November 2026
+
+The current UI uses direct **Run traceroute** for bounded private/loopback destinations and a fresh CIDR/usable-host confirmation dialog for every discovery submission. Older references above to a traceroute checkbox describe the earlier UI. Scope validation, rate limits, deadlines, origin restrictions and concurrency checks remain enforced.
+
+Latest automated run: **269 Python passed, 1 live-loopback integration test intentionally skipped; 118 frontend passed**. Network/process guards saw zero unmocked attempts, and storage was disposable. The refreshed [screenshot gallery](screenshots/README.md) shows generated loopback observations, not real scans or manual acceptance. The earlier owner-confirmed checks remain historical; no new real-network, OS-locale, PDF visual, or full accessibility acceptance is claimed by this publication. The NO-GO for declaring complete manual acceptance remains unchanged.

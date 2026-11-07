@@ -102,21 +102,21 @@ function renderNetworkMap() {
   }
   $('network-map-svg').setAttribute('viewBox',`0 0 ${width} 420`);
   $('network-map-empty').hidden=visible.length>0;
-  $('network-map-empty').textContent=mapNodes.length?'No devices match these filters.':'No stored devices or discovery observations. This map does not start scans.';
-  $('network-map-status').textContent=`${visible.length} displayed / ${data.total} addresses${data.total>MAP_NODE_LIMIT?' · Display capped at 200; monitored addresses take priority':''} · ${!mapTargetsFresh||!mapDiscoveryFresh?'Some sources unavailable/loading; stored outcomes may be stale.':'Stored data refreshed.'} No verified links available.`;
+  $('network-map-empty').textContent=mapNodes.length?'No devices match these filters.':'No stored devices or discovery observations.';
+  $('network-map-status').textContent=`${visible.length} displayed / ${data.total} addresses${data.total>MAP_NODE_LIMIT?' · Display capped at 200; monitored addresses take priority':''} · ${!mapTargetsFresh||!mapDiscoveryFresh?'Some sources unavailable/loading; stored outcomes may be stale.':'Stored data refreshed.'}`;
   mapApplyView();renderMapDetails();
 }
 function renderMapDetails() {
   const panel=$('network-map-details'),node=mapNodes.find(n=>n.ip===mapSelected);panel.replaceChildren();
-  if(!node){panel.append(element('p','muted',mapSelected?'Selected address is no longer in this bounded inventory.':'Select a node to inspect stored observations.'));return;}
-  panel.append(element('h3','',`${node.name||'Unassigned device'} · ${node.ip}`),element('p','',node.targets.length?'Actively monitored configuration':'Discovery only · not monitored'));
+  if(!node){panel.append(element('p','muted',mapSelected?'Selected address is no longer in the inventory.':'Select a node to inspect stored observations.'));return;}
+  panel.append(element('h3','',`${node.name||'Unassigned device'} · ${node.ip}`),element('p','',node.targets.length?'Monitored':'Discovery only · not monitored'));
   const observed=node.observation;
   panel.append(element('p','muted',`Latest ICMP outcome: ${mapStateLabel(observed.state)} · ${observed.source||'No source'} · ${observationLabel(observed.time)}${observed.state==='stale'?' · Stored result: '+mapStateLabel(observed.outcome):''}${observed.reason?' · '+observed.reason:''}`));
   if(node.discovery){
     const discovery=mapObservation({time:node.discovery.observed_at,outcome:node.discovery.classification==='responding'?'reachable':node.discovery.classification==='unresponsive'?'unresponsive':'unknown',fresh:mapDiscoveryFresh,staleMs:MAP_DISCOVERY_STALE_MS},Date.now());
     panel.append(element('p','muted',`Discovery: ${node.discovery.method} · ${mapStateLabel(discovery.state)} · stored ${node.discovery.classification} · ${observationLabel(node.discovery.observed_at)} · authorized scope ${node.discovery.cidr}`));
   }
-  else panel.append(element('p','muted','No retained discovery observation.'));
+  else panel.append(element('p','muted','No discovery observation.'));
   for(const {target,observation:tcp} of node.services){
     const icmp=mapObservation(target.checked_at?{time:target.checked_at,outcome:mapProtocol(target,'icmp'),fresh:mapTargetsFresh,staleMs:(target.stale_after_seconds||90)*1000}:null,Date.now());
     panel.append(element('h4','',`${target.name} · target #${target.id}`),element('p','muted',`Monitoring ${observationLabel(target.checked_at)} · ICMP ${mapStateLabel(icmp.state)} · TCP ${target.port}: ${mapStateLabel(tcp.state,'TCP')}${tcp.state==='stale'?' (stored '+mapStateLabel(tcp.outcome,'TCP')+')':''}`),
@@ -128,12 +128,12 @@ function renderMapDetails() {
     }
     const inspector=element('button','secondary',`Open inspector · ${target.name}`);inspector.type='button';inspector.onclick=()=>selectHistory(target.id);panel.append(inspector);
   }
-  if(!node.services.length)panel.append(element('p','muted','TCP not checked; discovery does not scan services.'));
+  if(!node.services.length)panel.append(element('p','muted','TCP not checked.'));
   if(node.targets.length){
     if(mapIncidentError)panel.append(element('p','muted',`Active incidents unavailable: ${mapIncidentError}. Stored incident details may be stale.`));
     if(mapIncidentData){
       const ids=new Set(node.targets.map(t=>t.id));const incidents=mapIncidentData.incidents.filter(row=>ids.has(row.target_id));
-      panel.append(element('p','muted',`${incidents.length} active incident(s) in the retrieved page${mapIncidentData.next_before_id?' · Active incident page is capped; this is not a complete count.':''}`));
+      panel.append(element('p','muted',`${incidents.length} active incidents${mapIncidentData.next_before_id?' · Active incident page is capped; this is not a complete count.':''}`));
       for(const row of incidents){const link=element('button','secondary',`Incident #${row.id} · ${incidentConditions[row.condition]||row.condition} · ${row.state}`);link.type='button';link.onclick=async()=>{await loadIncidentDetail(row.id,true);$('incidents').scrollIntoView({behavior:'auto',block:'start'});};panel.append(link);}
     }else if(!mapIncidentError)panel.append(element('p','muted','Loading active incident information…'));
     const link=element('a','secondary','Open incident dashboard');link.setAttribute('href','#incidents');panel.append(link);
