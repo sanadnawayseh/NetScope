@@ -582,8 +582,9 @@ test('success failure timeline preserves independent unknown protocol states', (
   assert.deepEqual(icmp.map(n=>n.className),['timeline-mark success','timeline-mark unknown','timeline-mark failure']);
   assert.deepEqual(tcp.map(n=>n.className),['timeline-mark failure','timeline-mark success','timeline-mark unknown']);
   assert.match(icmp[1].attributes['aria-label'],/unknown \(excluded\)/);
-  assert.equal(tcp[2].textContent,'?');
-  assert.match(nodes.get('timeline-status').textContent,/3 stored cycles.*oldest to newest/);
+  assert.equal(tcp[2].children[0].children[0].className,'observation-state unknown');
+  assert.equal(text(tcp[2]).trim(),'');
+  assert.match(nodes.get('timeline-status').textContent,/3\/3 cycles.*oldest to newest/);
 });
 
 test('empty and failed selected history also clear the availability timeline', async () => {
@@ -592,7 +593,7 @@ test('empty and failed selected history also clear the availability timeline', a
   context.fetch=async()=>({ok:true,json:async()=>[]});
   await historyButton(nodes,1).onclick();
   assert.match(nodes.get('availability-history-label').textContent,/Homer Router.*192.168.1.1/);
-  assert.match(nodes.get('timeline-status').textContent,/No recorded cycles yet/);
+  assert.match(nodes.get('timeline-status').textContent,/No recorded cycles/);
   assert.equal(nodes.get('check-timeline').children[0].children[1].children.length,0);
   context.fetch=async()=>({ok:false,status:500,json:async()=>({error:'Database unavailable'})});
   await historyButton(nodes,0).onclick();
@@ -1233,4 +1234,185 @@ test('availability tracks retain partial-loss success, unknown records, gaps and
   const rtt=nodes.get('compare-rtt').drawCalls.filter(c=>c[0]==='arc');assert.equal(rtt.length,1);
   assert.equal(bars[0][1]+1.5,rtt[0][1]); // Same elapsed-time x coordinate across metrics.
   assert.match(nodes.get('compare-availability').attributes['aria-label'],/Blank spans: no stored observations/);
+});
+
+test('sparse timeline retains all 60 cycles and true multi-day gaps',()=>{
+  const {context,nodes,text}=dashboard();
+  vm.runInContext(`history=[...Array(60)].map((_,i)=>({id:i+1,checked_at:new Date(Date.UTC(2026,9,i<13?23:i<46?36:38,12,0,i)).toISOString(),icmp_check_status:i===8?'unknown':i%2?'success':'failure',tcp_check_status:'success'}));drawCheckTimeline();`,context);
+  const groups=vm.runInContext('timelineLayout(history,timeBounds(history),800).groups',context);
+  assert.deepEqual(Array.from(groups,g=>g.points.length),[13,33,14]);
+  assert.equal(new Set(groups.flatMap(g=>Array.from(g.points,p=>p.record.id))).size,60);
+  assert.ok((groups[1].start-groups[0].end)>.8);
+  assert.match(text(nodes.get('check-timeline')),/No records · 13d/);
+  assert.match(nodes.get('timeline-status').textContent,/60\/60 cycles/);
+  const button=nodes.get('check-timeline').children[0].children[1].children[0];
+  button.listeners.click();
+  assert.equal(nodes.get('timeline-records').children.length,5);
+  nodes.get('timeline-page-next').listeners.click();
+  assert.match(text(nodes.get('timeline-records').children[3]),/Unknown.*Success/);
+  assert.equal(nodes.get('timeline-details').hidden,false);
+});
+
+
+test('dense groups remain bounded, nonoverlapping, chronological and lossless',()=>{
+  const {context}=dashboard();
+  const result=vm.runInContext(`(()=>{const rows=Array.from({length:180},(_,i)=>({id:i,checked_at:new Date(Date.UTC(2026,10,7,12,0,i)).toISOString()}));return timelineLayout(rows,timeBounds(rows),800);})()`,context);
+  assert.ok(result.groups.length>8);
+  assert.equal(result.groups.flatMap(g=>g.points).length,180);
+  assert.deepEqual(Array.from(result.groups.flatMap(g=>g.points),p=>p.record.id),Array.from({length:180},(_,i)=>i));
+  for(let i=1;i<result.groups.length;i++){
+    const a=result.groups[i-1],b=result.groups[i];
+    assert.ok((b.start+b.end-a.start-a.end)/2*800>=16);
+  }
+});
+
+
+test('timezone offsets map equal instants together and DST overlap remains distinct',()=>{
+  const {context}=dashboard();
+  const result=vm.runInContext(`(()=>{const rows=['2026-11-01T01:30:00-04:00','2026-11-01T05:30:00Z','2026-11-01T01:30:00-05:00','2026-11-01T10:30:00+04:00'].map(checked_at=>({checked_at}));return timelineLayout(rows,timeBounds(rows),800);})()`,context);
+  assert.deepEqual(Array.from(result.groups,g=>g.points.length),[2,2]);
+  assert.equal(result.groups[0].start,0);assert.equal(result.groups[1].start,1);
+  assert.equal(result.groups[1].points[0].time-result.groups[0].points[0].time,3600000);
+});
+
+
+test('invalid and unzoned times remain accessible rather than silently disappearing',()=>{
+  const {context,nodes,text}=dashboard();
+  vm.runInContext(`history=['bad','2026-11-07T12:00:00'].map((checked_at,i)=>({id:i,checked_at,icmp_check_status:'unknown',tcp_check_status:'failure'}));drawCheckTimeline();`,context);
+  const button=nodes.get('check-timeline').children.at(-1);assert.match(button.textContent,/2 cycles with unknown time/);
+  button.listeners.click();assert.equal(nodes.get('timeline-records').children.length,2);
+  assert.match(text(nodes.get('timeline-records')),/Unknown time.*Unknown.*Failure/);
+  assert.equal(nodes.get('timeline-zoom').disabled,true);
+});
+
+
+test('record details support Escape, zoom, reset and independent mixed outcomes',()=>{
+  const {context,nodes,text}=dashboard();
+  vm.runInContext(`history=[0,1,864000].map((s,i)=>({id:i,checked_at:new Date(Date.UTC(2026,10,1)+s*1000).toISOString(),icmp_check_status:i?'failure':'success',tcp_check_status:i?'unknown':'failure'}));drawCheckTimeline();`,context);
+  let button=nodes.get('check-timeline').children[0].children[1].children[0];
+  assert.equal(button.tagName,'button');assert.equal(button.className,'timeline-mark mixed');
+  assert.match(button.attributes['aria-label'],/1 success, 1 failure, 0 unknown/);
+  button.listeners.click();let prevented=false;
+  nodes.get('timeline-details').listeners.keydown({key:'Escape',preventDefault(){prevented=true;}});
+  assert.equal(prevented,true);assert.equal(nodes.get('timeline-details').hidden,true);assert.equal(button.focuses.length,1);
+  button.listeners.click();nodes.get('timeline-zoom').listeners.click();
+  assert.equal(nodes.get('timeline-reset').hidden,false);assert.match(nodes.get('timeline-status').textContent,/2\/3 cycles.*Zoomed/);
+  nodes.get('timeline-reset').listeners.click();assert.match(nodes.get('timeline-status').textContent,/3\/3 cycles/);
+  assert.equal(nodes.get('timeline-reset').hidden,true);
+  button=nodes.get('check-timeline').children[0].children[1].children[0];button.listeners.click();
+  assert.match(text(nodes.get('timeline-records')),/Success.*Failure.*Failure.*Unknown/);
+});
+
+
+test('open record details survive refresh but clear on device switch and history failure',()=>{
+  const {context,nodes}=dashboard();
+  vm.runInContext(`selectedId=1;history=[{checked_at:'2026-11-07T12:00:00Z'}];drawCheckTimeline();`,context);
+  nodes.get('check-timeline').children[0].children[1].children[0].listeners.click();
+  const row=nodes.get('timeline-records').children[0];vm.runInContext('drawCheckTimeline()',context);
+  assert.equal(nodes.get('timeline-records').children[0],row);
+  vm.runInContext('selectedId=2;drawCheckTimeline()',context);assert.equal(nodes.get('timeline-details').hidden,true);
+  nodes.get('check-timeline').children[0].children[1].children[0].listeners.click();
+  vm.runInContext("history=[];historyError='History unavailable';drawCheckTimeline()",context);
+  assert.equal(nodes.get('timeline-details').hidden,true);
+});
+
+
+test('timeline range mirrors existing analytics controls and discloses truncated data',()=>{
+  const {context,nodes}=dashboard();
+  vm.runInContext(`history=[{checked_at:'2026-11-07T12:00:00Z'}];rangeSummary={truncated:true,summary:{record_count:2500}};drawCheckTimeline();`,context);
+  assert.match(nodes.get('timeline-status').textContent,/1\/2500 cycles.*Newest 1 loaded/);
+  nodes.get('timeline-range').value='7d';nodes.get('timeline-range').listeners.change();
+  assert.equal(nodes.get('history-range').value,'7d');
+  assert.equal(vm.runInContext('historyRange',context),'7d');
+  assert.equal(nodes.get('timeline-details').hidden,true);
+});
+
+
+test('quiet observation rails retain every mixed state without visible symbols or counts',()=>{
+ const {context,nodes,text}=dashboard();
+ vm.runInContext(`history=[0,1,2,864000].map((s,i)=>({checked_at:new Date(Date.UTC(2026,10,1)+s*1000).toISOString(),icmp_check_status:['success','failure','unknown','success'][i],tcp_check_status:'success'}));drawCheckTimeline();`,context);
+ const rows=nodes.get('check-timeline').children,mark=rows[0].children[1].children[0];
+ assert.equal(rows[0].children[0].textContent,'ICMP');assert.equal(rows[1].children[0].textContent,'TCP');
+ assert.equal(text(mark).trim(),'');assert.equal(mark.children.length,1);
+ const sample=mark.children[0];assert.equal(sample.className,'observation-sample');assert.equal(sample.style.width,'6px');
+ assert.deepEqual(sample.children.map(n=>n.className),['observation-state success','observation-state failure','observation-state unknown']);
+ assert.match(mark.attributes['aria-label'],/3 cycles.*1 success, 1 failure, 1 unknown/);
+ assert.equal(mark.attributes['aria-controls'],'timeline-details');assert.equal(mark.attributes['aria-expanded'],'false');
+ mark.listeners.click();assert.equal(mark.attributes['aria-expanded'],'true');
+ nodes.get('timeline-close').listeners.click();assert.equal(mark.attributes['aria-expanded'],'false');
+});
+
+
+test('rare unknown records remain visible and every dense record is reachable through compact pages',()=>{
+ const {context,nodes,text}=dashboard();
+ vm.runInContext(`history=Array.from({length:103},(_,i)=>({id:i,checked_at:'2026-11-07T12:00:00Z',icmp_check_status:i===102?'unknown':i===101?'failure':'success',tcp_check_status:'failure'}));drawCheckTimeline();`,context);
+ const mark=nodes.get('check-timeline').children[0].children[1].children[0];
+ assert.deepEqual(mark.children[0].children.map(n=>n.className),['observation-state success','observation-state failure','observation-state unknown']);
+ mark.listeners.click();assert.equal(nodes.get('timeline-records').children.length,5);
+ assert.equal(nodes.get('timeline-page-prev').disabled,true);
+ const seen=[];
+ for(let page=0;page<21;page++){
+   const rows=nodes.get('timeline-records').children;assert.ok(rows.length<=5);
+   seen.push(...rows.map(row=>row.attributes.title));
+   nodes.get('timeline-page-next').listeners.click();
+ }
+ assert.deepEqual(seen,Array.from({length:103},(_,i)=>`Cycle ${i}`));
+ assert.equal(nodes.get('timeline-page-next').disabled,true);
+ assert.equal(nodes.get('timeline-page-status').textContent,'101–103 of 103');
+ assert.match(text(nodes.get('timeline-records')),/Failure.*Unknown/);
+ nodes.get('timeline-page-prev').listeners.click();assert.equal(nodes.get('timeline-page-status').textContent,'96–100 of 103');
+});
+
+
+test('each protocol rail has one tab stop with arrow and Home/End navigation',()=>{
+ const {context,nodes}=dashboard();
+ vm.runInContext(`history=[0,3600,7200].map(s=>({checked_at:new Date(Date.UTC(2026,10,7)+s*1000).toISOString()}));drawCheckTimeline();`,context);
+ const marks=nodes.get('check-timeline').children[0].children[1].children;
+ assert.deepEqual(marks.map(m=>m.tabIndex),[0,-1,-1]);
+ let prevented=0;
+ marks[0].listeners.keydown({key:'ArrowRight',preventDefault(){prevented++;}});
+ assert.deepEqual(marks.map(m=>m.tabIndex),[-1,0,-1]);assert.equal(marks[1].focuses.length,1);
+ marks[1].listeners.keydown({key:'End',preventDefault(){prevented++;}});assert.equal(marks[2].tabIndex,0);
+ marks[2].listeners.keydown({key:'Home',preventDefault(){prevented++;}});assert.equal(marks[0].tabIndex,0);
+ assert.equal(prevented,3);
+});
+
+
+test('background refresh restores the rendered summary without replacing focused records',()=>{
+ const {context,nodes}=dashboard();
+ vm.runInContext(`selectedId=1;history=[{checked_at:'2026-11-07T12:00:00Z',icmp_check_status:'unknown'}];drawCheckTimeline();`,context);
+ const summary=nodes.get('timeline-status').textContent;
+ nodes.get('check-timeline').children[0].children[1].children[0].listeners.click();
+ const row=nodes.get('timeline-records').children[0];
+ nodes.get('timeline-status').textContent='Loading history…';vm.runInContext('drawCheckTimeline()',context);
+ assert.equal(nodes.get('timeline-status').textContent,summary);
+ assert.equal(nodes.get('timeline-records').children[0],row);assert.equal(nodes.get('timeline-details').hidden,false);
+});
+
+
+
+test('cycle denominator follows the selected range total rather than the latest-60 limit',()=>{
+ const {context,nodes}=dashboard();
+ vm.runInContext(`history=Array.from({length:60},(_,i)=>({checked_at:new Date(Date.UTC(2026,10,7,12,0,i)).toISOString()}));historyRange='1h';rangeSummary={summary:{record_count:60},truncated:false};drawCheckTimeline();`,context);
+ assert.match(nodes.get('timeline-status').textContent,/^60\/60 cycles/);
+ vm.runInContext(`history=history.slice(0,12);rangeSummary={summary:{record_count:12},truncated:false};drawCheckTimeline();`,context);
+ assert.match(nodes.get('timeline-status').textContent,/^12\/12 cycles/);
+ vm.runInContext(`history=[];rangeSummary={summary:{record_count:0},truncated:false};drawCheckTimeline();`,context);
+ assert.match(nodes.get('timeline-status').textContent,/^0\/0 cycles/);
+});
+
+
+test('capped history reports returned cycles over all records in the selected range',()=>{
+ const {context,nodes}=dashboard();
+ vm.runInContext(`history=Array.from({length:2000},(_,i)=>({checked_at:new Date(Date.UTC(2026,10,7,12,0,i)).toISOString()}));historyRange='6h';rangeSummary={summary:{record_count:3500},truncated:true};drawCheckTimeline();`,context);
+ assert.match(nodes.get('timeline-status').textContent,/^2000\/3500 cycles.*Newest 2000 loaded/);
+});
+
+
+test('open details keep the displayed numerator but update the range total on refresh',()=>{
+ const {context,nodes}=dashboard();
+ vm.runInContext(`selectedId=1;history=[{checked_at:'2026-11-07T12:00:00Z'}];rangeSummary={summary:{record_count:1}};drawCheckTimeline();`,context);
+ nodes.get('check-timeline').children[0].children[1].children[0].listeners.click();
+ vm.runInContext(`history.push({checked_at:'2026-11-07T12:01:00Z'});rangeSummary.summary.record_count=2;drawCheckTimeline();`,context);
+ assert.match(nodes.get('timeline-status').textContent,/^1\/2 cycles/);
 });

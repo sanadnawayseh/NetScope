@@ -915,3 +915,65 @@ management stays compact below it. */
 .comparison-legend { color:#bcc3c9; font-size:12px; line-height:1.7; }
 @media(max-width:1050px) { #comparison-summary { grid-template-columns:1fr; } }
 @media(max-width:600px) { .comparison-metrics { grid-template-columns:1fr; } }
+
+
+/* Observation rails: elapsed time is the only horizontal scale. */
+#availability-history {padding:24px;background:#181B1E;color:#E3E7ED;border-color:#343A40;font-family:"Segoe UI",system-ui,sans-serif}
+#availability-history select:focus-visible,#availability-history .secondary:focus-visible,#availability-history summary:focus-visible {outline:2px solid #A8C4FF;outline-offset:3px}
+#availability-history .context-help {color:#A7AFB9;font-size:11px}
+#availability-history .context-help summary {cursor:pointer;padding:6px 0;color:#BDC9DE}
+#availability-history .context-help .chart-note {border:0;margin:4px 0 0;padding:4px 0}
+
+#availability-history .section-heading {margin-bottom:12px}
+#availability-history .timeline-toolbar {display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 22px}
+#availability-history .timeline-toolbar select {width:auto;min-width:170px}
+#availability-history .timeline-legend {display:flex;gap:14px;margin-left:auto;color:#A7AFB9;font-size:11px;white-space:normal}
+#availability-history .timeline-legend>span {display:inline-flex;align-items:center;gap:6px}
+#availability-history .timeline-legend i {width:7px;height:10px;display:inline-block;border-radius:1px}
+#availability-history .timeline-legend .success,#availability-history .observation-state.success {background:#76B6A2}
+#availability-history .timeline-legend .failure,#availability-history .observation-state.failure {background:#D18B94}
+#availability-history .timeline-legend .unknown,#availability-history .observation-state.unknown {background:#929DAA;border-bottom:2px dotted #181B1E}
+#availability-history .timeline-row,#availability-history .timeline-axis {display:grid;grid-template-columns:60px minmax(0,1fr);gap:12px;align-items:center}
+#availability-history .timeline-row {margin:2px 0}
+#availability-history .timeline-label {font-size:12px;font-weight:600;color:#D3D9E1}
+#availability-history .timeline-track {position:relative;display:block;height:38px;margin:0 10px;padding:0;overflow:visible;background:none;border:0}
+#availability-history .timeline-track::before {content:"";position:absolute;top:19px;left:0;right:0;height:1px;background:#2C3136}
+#availability-history .timeline-mark {position:absolute;top:3px;transform:translateX(-50%);width:16px;min-width:16px;height:32px;min-height:32px;display:flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:0;background:none;box-shadow:none;cursor:pointer;overflow:visible}
+#availability-history .observation-sample {display:flex;flex-direction:column;height:20px;min-width:3px;border-radius:1px;overflow:hidden}
+#availability-history .observation-state {display:block;flex:1;min-height:0;width:100%}
+#availability-history .timeline-mark:hover .observation-sample,#availability-history .timeline-mark[aria-expanded="true"] .observation-sample {outline:1px solid #6488D8;outline-offset:3px}
+#availability-history .timeline-mark:focus-visible {outline:2px solid #A8C4FF;outline-offset:2px;z-index:2}
+#availability-history .timeline-ticks {position:relative;height:47px;margin:0 10px;border-top:1px solid #343A40}
+#availability-history .timeline-tick {position:absolute;top:7px;transform:translateX(-50%);font-size:11px;color:#A7AFB9;white-space:nowrap;text-align:center;line-height:1.5;font-variant-numeric:tabular-nums}
+#availability-history .timeline-tick span {display:block}
+#availability-history .timeline-tick.first {transform:none;text-align:left}
+#availability-history .timeline-tick.last {transform:translateX(-100%);text-align:right}
+#availability-history .timeline-gaps {position:relative;margin:0 10px;height:22px}
+#availability-history .timeline-gap {position:absolute;transform:translateX(-50%);white-space:nowrap;font-size:11px;color:#A7AFB9}
+#availability-history #timeline-status {font-size:11px;margin:10px 0;color:#A7AFB9}
+#availability-history .timeline-details {margin-top:16px;padding-top:16px;border-top:1px solid #343A40}
+#availability-history .timeline-details h3 {margin:0;font-size:13px}
+#availability-history .timeline-details .section-heading {align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+#availability-history #timeline-selection-summary {font-size:11px;line-height:1.6;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 16px;margin:6px 0 12px;color:#A7AFB9}
+#availability-history .timeline-table {overflow:visible}
+#availability-history .timeline-table table {width:100%;table-layout:fixed;border-collapse:collapse}
+#availability-history .timeline-table th,#availability-history .timeline-table td {padding:8px 10px;white-space:normal;overflow-wrap:anywhere;text-align:left;font-size:12px}
+#availability-history .timeline-table th:first-child {width:56%}
+#availability-history .timeline-table th {font-size:11px;font-weight:500;color:#A7AFB9;background:none}
+#availability-history .observation-time {font-variant-numeric:tabular-nums}
+#availability-history .history-state.success {color:#76B6A2}
+#availability-history .history-state.failure {color:#D18B94}
+#availability-history .history-state.unknown {color:#A7AFB9}
+#availability-history .timeline-pagination {display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px;font-size:11px;color:#A7AFB9}
+#availability-history .context-help {margin-top:12px}
+@media(max-width:600px){
+ #availability-history {padding:18px}
+ #availability-history .timeline-row,#availability-history .timeline-axis {grid-template-columns:38px minmax(0,1fr);gap:8px}
+ #availability-history .timeline-legend {width:100%;margin:4px 0 0}
+ #availability-history .timeline-toolbar {gap:8px;margin-bottom:14px}
+ #availability-history .timeline-toolbar select {min-width:150px}
+ #availability-history #timeline-selection-summary {grid-template-columns:1fr}
+ #availability-history .timeline-table th,#availability-history .timeline-table td {padding:7px 4px;font-size:11px}
+ #availability-history .timeline-table th:first-child {width:52%}
+ #availability-history .timeline-tick {font-size:10px}
+}

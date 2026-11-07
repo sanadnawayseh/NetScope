@@ -52,6 +52,27 @@ class FrontendTemplateTests(unittest.TestCase):
             self.assertEqual(template.tags['sort-' + key], 'button')
             self.assertEqual(template.tags['sort-heading-' + key], 'th')
 
+    def test_history_record_controls_have_accessible_native_bindings(self):
+        template = Template()
+        template.feed(netscope.app.test_client().get('/').get_data(as_text=True))
+        self.assertEqual(template.tags['timeline-range'], 'select')
+        self.assertIn('hidden', template.attributes['timeline-details'])
+        self.assertEqual(template.attributes['timeline-details']['aria-labelledby'], 'timeline-detail-heading')
+        self.assertEqual(template.attributes['timeline-detail-heading']['tabindex'], '-1')
+        self.assertEqual(template.tags['timeline-records'], 'tbody')
+        for identifier in ('timeline-close', 'timeline-reset', 'timeline-zoom'):
+            self.assertEqual(template.tags[identifier], 'button')
+            self.assertEqual(template.attributes[identifier]['type'], 'button')
+
+    def test_history_outcome_legend_sits_directly_before_timeline(self):
+        html = netscope.app.test_client().get('/').get_data(as_text=True)
+        section = html.split('id="availability-history"', 1)[1].split('id="timeline-details"', 1)[0]
+        self.assertLess(section.index('id="timeline-range"'), section.index('class="timeline-legend"'))
+        self.assertLess(section.index('class="timeline-legend"'), section.index('id="check-timeline"'))
+        self.assertIn('aria-label="Check outcomes"', section)
+        for state in ('success', 'failure', 'unknown'):
+            self.assertIn(f'class="{state}" aria-hidden="true"></i>', section)
+
     def test_add_device_disclosure_is_closed_and_accessibly_bound(self):
         html = netscope.app.test_client().get('/').get_data(as_text=True)
         template = Template()

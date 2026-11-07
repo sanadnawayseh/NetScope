@@ -27,6 +27,32 @@ class HistoricalAnalyticsTests(unittest.TestCase):
         with app.get_db() as db:
             db.execute(f"INSERT INTO results ({','.join(row)}) VALUES ({','.join('?' for _ in row)})",tuple(row.values()))
 
+    def test_sparse_sixty_cycles_preserve_times_and_independent_protocol_states(self):
+        from datetime import timedelta
+        stamps = []
+        for day, count in ((23, 13), (36, 33), (38, 14)):
+            base = datetime(2026, 10, 1, 12, tzinfo=timezone.utc) + timedelta(days=day-1)
+            stamps.extend((base + timedelta(seconds=i*30)).isoformat() for i in range(count))
+        for i, stamp in enumerate(stamps):
+            # Offset spelling must not alter the instant or classification.
+            value = datetime.fromisoformat(stamp).astimezone(timezone(timedelta(hours=4))).isoformat() if i % 2 else stamp
+            self.insert(checked_at=value, ping_error='Ping command failed' if i == 8 else None,
+                        tcp_ok=0 if i == 9 else 1,
+                        tcp_error='Connection refused (port is not accepting connections)' if i == 9 else None)
+        latest = self.client.get('/api/targets/1/history').json
+        self.assertEqual(len(latest), 60)
+        self.assertEqual(len({row['id'] for row in latest}), 60)
+        self.assertEqual([datetime.fromisoformat(row['checked_at']).timestamp() for row in latest],
+                         [datetime.fromisoformat(stamp).timestamp() for stamp in stamps])
+        self.assertEqual((latest[8]['icmp_check_status'], latest[8]['tcp_check_status']), ('unknown', 'success'))
+        self.assertEqual((latest[9]['icmp_check_status'], latest[9]['tcp_check_status']), ('success', 'failure'))
+        now = datetime(2026, 11, 7, 18, tzinfo=timezone.utc)
+        with patch.object(app, 'time_window', return_value=analytics.time_window('30d', now)):
+            ranged = self.client.get('/api/history?targets=1&range=30d').json['series'][0]
+        self.assertEqual(len(ranged['points']), 60)
+        self.assertEqual(ranged['summary']['record_count'], 60)
+        self.assertGreater(datetime.fromisoformat(stamps[13]).timestamp()-datetime.fromisoformat(stamps[12]).timestamp(), 12*86400)
+
     def test_range_and_device_validation(self):
         for value in analytics.RANGES:
             self.assertEqual(self.request('targets=1&range='+value).status_code, 200)

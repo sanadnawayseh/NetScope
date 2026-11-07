@@ -247,29 +247,145 @@ function drawLossChart() {
   $('loss-chart-status').textContent=valid.length?`${valid.length} recorded packet-loss measurements · latest ${fmt(valid.at(-1).packet_loss_pct)}%`:'No packet-loss measurements available. Run checks to collect a five-probe batch; older records remain N/A.';
   canvas.setAttribute('aria-label', `ICMP packet-loss history: ${valid.length} measurements.${valid.length?` Latest ${fmt(valid.at(-1).packet_loss_pct)} percent; minimum ${fmt(Math.min(...valid.map(d=>d.packet_loss_pct)))} percent; maximum ${fmt(Math.max(...valid.map(d=>d.packet_loss_pct)))} percent.`:''}`);
 }
-function drawCheckTimeline() {
-  const timeline = $('check-timeline');
-  timeline.replaceChildren();
-  const bounds = timeBounds(history, historyWindow);
-  for (const [key, label] of [['icmp_check_status', 'ICMP checks'], ['tcp_check_status', 'TCP checks']]) {
-    const row = element('div', 'timeline-row'), track = element('div', 'timeline-track');
-    track.setAttribute('role', 'list'); track.setAttribute('aria-label', label);
-    history.forEach((record, index) => {
-      const fraction = timeFraction(record, bounds);
-      if (fraction === null) return;
-      const state = ['success', 'failure'].includes(record[key]) ? record[key] : 'unknown';
-      const text = `${label} · cycle ${index + 1} · ${observationLabel(record.checked_at)} · ${state}${state === 'unknown' ? ' (excluded)' : ''}`;
-      const mark = element('span', `timeline-mark ${state}`, state === 'success' ? '+' : state === 'failure' ? '−' : '?');
-      mark.setAttribute('role', 'listitem'); mark.setAttribute('tabindex', '0');
-      mark.setAttribute('aria-label', text); mark.setAttribute('title', text);
-      mark.style.left = `${fraction*100}%`;
-      track.append(mark);
-    });
-    row.append(element('span', 'timeline-label', label), track); timeline.append(row);
+// Group collisions without aggregating or discarding the underlying observations.
+function timelineLayout(records, bounds, width) {
+  const span=bounds[1]-bounds[0], groups=[], undated=[];
+  const points=records.map((record,index)=>({record,index,time:chartTime(record)}));
+  for(const point of points.filter(p=>!Number.isFinite(p.time))) undated.push(point);
+  const dated=points.filter(p=>Number.isFinite(p.time) && p.time>=bounds[0] && p.time<=bounds[1]).sort((a,b)=>a.time-b.time || a.index-b.index);
+  for(const point of dated) {
+    const fraction=span?(point.time-bounds[0])/span:.5, last=groups.at(-1);
+    if(last && (fraction-last.start)*width<16) {last.points.push(point);last.end=fraction;}
+    else groups.push({points:[point],start:fraction,end:fraction});
   }
-  const times = history.map(d=>d.checked_at).filter(t=>t && Number.isFinite(new Date(t).getTime())).sort((a,b)=>new Date(a)-new Date(b));
-  $('timeline-status').textContent = history.length ? `${history.length} stored cycles · ${times.length ? observationLabel(times[0]) + ' → ' + observationLabel(times.at(-1)) : 'Observation times unavailable'} · oldest to newest` : 'No recorded cycles yet. Run checks to begin an observation window.';
+  const separated=[];
+  for(const group of groups) {
+    const previous=separated.at(-1);
+    if(previous && ((group.start+group.end-previous.start-previous.end)/2)*width<16) {
+      previous.points.push(...group.points);previous.end=group.end;
+    } else separated.push(group);
+  }
+  return {groups:separated,undated,dated};
 }
+function timelineState(record,key) {return ['success','failure'].includes(record[key])?record[key]:'unknown';}
+let timelineZoom=null, timelineDevice=null, timelineSelection=null, timelineReturnFocus=null, timelineStatusText='', timelineVisibleCycles=0, timelinePage=0;
+const TIMELINE_PAGE_SIZE=5;
+function timelineCycleSummary(shown) {
+  const total=Number.isInteger(rangeSummary?.summary?.record_count)?rangeSummary.summary.record_count:history.length;
+  const zone=Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local time';
+  return `${shown}/${total} cycles${total?'':' · No recorded cycles.'} · ${zone} · oldest to newest${timelineZoom?' · Zoomed':''}${rangeSummary?.truncated?` · Newest ${history.length} loaded`:''}`;
+}
+function timelineDuration(ms) {
+  const minutes=Math.floor(ms/60000);
+  return minutes>=1440?`${Math.floor(minutes/1440)}d ${Math.floor(minutes%1440/60)}h`:minutes>=60?`${Math.floor(minutes/60)}h ${minutes%60}m`:minutes?`${minutes}m`:`${Math.round(ms/1000)}s`;
+}
+function showTimelineRecords(points, trigger) {
+  timelineReturnFocus?.setAttribute('aria-expanded','false');
+  timelineSelection=points;timelinePage=0;timelineReturnFocus=trigger;trigger.setAttribute('aria-expanded','true');
+  $('timeline-details').hidden=false;
+  $('timeline-detail-heading').textContent=`${points.length} selected ${points.length===1?'observation':'observations'}`;
+  const summaries=[['ICMP','icmp_check_status'],['TCP','tcp_check_status']].map(([label,key])=>{
+    const count={success:0,failure:0,unknown:0};points.forEach(p=>count[timelineState(p.record,key)]++);
+    return `${label}: ${count.success} success · ${count.failure} failure · ${count.unknown} unknown`;
+  });
+  $('timeline-selection-summary').replaceChildren(...summaries.map(summary=>element('span','',summary)));
+  const times=points.map(p=>p.time).filter(Number.isFinite);
+  $('timeline-zoom').disabled=times.length<2 || Math.min(...times)===Math.max(...times);
+  renderTimelinePage();$('timeline-detail-heading').focus({preventScroll:true});
+}
+function renderTimelinePage() {
+  if(!timelineSelection)return;
+  const start=timelinePage*TIMELINE_PAGE_SIZE,body=$('timeline-records');body.replaceChildren();
+  for(const {record,index,time} of timelineSelection.slice(start,start+TIMELINE_PAGE_SIZE)) {
+    const row=element('tr');row.setAttribute('title',`Cycle ${record.id??index+1}`);
+    row.append(element('td','observation-time',Number.isFinite(time)?observationLabel(record.checked_at):'Unknown time'));
+    for(const key of ['icmp_check_status','tcp_check_status']) {
+      const state=timelineState(record,key);
+      row.append(element('td',`history-state ${state}`,state==='success'?'Success':state==='failure'?'Failure':'Unknown'));
+    }
+    body.append(row);
+  }
+  $('timeline-pagination').hidden=timelineSelection.length<=TIMELINE_PAGE_SIZE;
+  $('timeline-page-status').textContent=`${start+1}–${Math.min(start+TIMELINE_PAGE_SIZE,timelineSelection.length)} of ${timelineSelection.length}`;
+  $('timeline-page-prev').disabled=timelinePage===0;
+  $('timeline-page-next').disabled=start+TIMELINE_PAGE_SIZE>=timelineSelection.length;
+}
+$('timeline-page-prev').addEventListener('click',()=>{if(timelineSelection && timelinePage>0){timelinePage--;renderTimelinePage();}});
+$('timeline-page-next').addEventListener('click',()=>{if(timelineSelection && (timelinePage+1)*TIMELINE_PAGE_SIZE<timelineSelection.length){timelinePage++;renderTimelinePage();}});
+function closeTimelineRecords() {
+  $('timeline-details').hidden=true;timelineSelection=null;timelineReturnFocus?.setAttribute('aria-expanded','false');timelineReturnFocus?.focus({preventScroll:true});
+}
+function drawCheckTimeline(force=false) {
+  // Preserve an open record table and keyboard focus during background refresh.
+  if(!force && history.length && !historyError && timelineDevice===selectedId && (timelineSelection || document.activeElement?.closest?.('#check-timeline'))) {
+    timelineStatusText=timelineCycleSummary(timelineVisibleCycles);
+    $('timeline-status').textContent=timelineStatusText;return;
+  }
+  if(!history.length || historyError){timelineSelection=null;$('timeline-details').hidden=true;}
+  if(timelineDevice!==selectedId) {timelineZoom=null;timelineSelection=null;$('timeline-details').hidden=true;timelineDevice=selectedId;}
+  const timeline=$('check-timeline');timeline.replaceChildren();
+  const bounds=timelineZoom || timeBounds(history,historyWindow),width=Math.max(80,timeline.getBoundingClientRect().width-(window.matchMedia('(max-width: 600px)').matches?66:92));
+  const layout=timelineLayout(history,bounds,width);
+  $('timeline-range').value=historyRange;$('timeline-reset').hidden=!timelineZoom;
+  for(const [key,label] of [['icmp_check_status','ICMP'],['tcp_check_status','TCP']]) {
+    const row=element('div','timeline-row'),track=element('div','timeline-track');
+    track.setAttribute('role','group');track.setAttribute('aria-label',label);
+    const marks=[];
+    for(const group of layout.groups) {
+      const counts={success:0,failure:0,unknown:0};group.points.forEach(p=>counts[timelineState(p.record,key)]++);
+      const states=Object.keys(counts).filter(s=>counts[s]),state=states.length===1?states[0]:'mixed',single=group.points.length===1;
+      const text=single?`${label} · cycle ${group.points[0].index+1} · ${observationLabel(group.points[0].record.checked_at)} · ${state}${state==='unknown'?' (excluded)':''}`:
+        `${label} · ${group.points.length} cycles · ${observationLabel(group.points[0].record.checked_at)} to ${observationLabel(group.points.at(-1).record.checked_at)} · ${counts.success} success, ${counts.failure} failure, ${counts.unknown} unknown (excluded). Show records`;
+      const mark=element('button',`timeline-mark ${state}`);
+      mark.type='button';mark.setAttribute('aria-label',text);mark.setAttribute('title',text);mark.setAttribute('aria-controls','timeline-details');mark.setAttribute('aria-expanded','false');
+      mark.style.left=`${(group.start+group.end)/2*100}%`;
+      // Fixed-width glyphs represent observations, never elapsed monitoring duration.
+      const extent=6;
+      const sample=element('span','observation-sample');sample.setAttribute('aria-hidden','true');sample.style.width=`${extent}px`;
+      for(const status of states) sample.append(element('span',`observation-state ${status}`));
+      mark.append(sample);mark.tabIndex=marks.length===0?0:-1;marks.push(mark);
+      mark.addEventListener('keydown',event=>{
+        const index=marks.indexOf(mark);
+        const next=event.key==='ArrowRight'?Math.min(marks.length-1,index+1):event.key==='ArrowLeft'?Math.max(0,index-1):event.key==='Home'?0:event.key==='End'?marks.length-1:null;
+        if(next===null)return;event.preventDefault();marks.forEach((m,i)=>m.tabIndex=i===next?0:-1);marks[next].focus({preventScroll:true});
+      });
+      mark.addEventListener('click',()=>{marks.forEach(m=>m.tabIndex=m===mark?0:-1);showTimelineRecords(group.points,mark);});track.append(mark);
+    }
+    row.append(element('span','timeline-label',label),track);timeline.append(row);
+  }
+  const axis=element('div','timeline-axis'),ticks=element('div','timeline-ticks');
+  const tickCount=bounds[0]===bounds[1]?1:Math.max(2,Math.min(4,Math.floor(width/160)+1));
+  if(layout.dated.length || historyWindow)for(let i=0;i<tickCount;i++) {
+    const fraction=tickCount===1?.5:i/(tickCount-1),date=new Date(bounds[0]+(bounds[1]-bounds[0])*fraction);
+    const tick=element('span','timeline-tick');tick.style.left=`${fraction*100}%`;
+    if(i===0)tick.className+=' first';if(i===tickCount-1)tick.className+=' last';
+    tick.append(element('span','',date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})),element('span','',date.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit',second:bounds[1]-bounds[0]<600000?'2-digit':undefined,hour12:false})));ticks.append(tick);
+  }
+  axis.append(element('span','timeline-label',''),ticks);timeline.append(axis);
+  const gaps=element('div','timeline-gaps');
+  for(let i=1;i<layout.dated.length;i++) {
+    const prev=layout.dated[i-1],next=layout.dated[i],span=bounds[1]-bounds[0];
+    if(span && (next.time-prev.time)/span*width>160) {
+      const gap=element('span','timeline-gap',`No records · ${timelineDuration(next.time-prev.time)}`);
+      gap.style.left=`${((prev.time+next.time)/2-bounds[0])/span*100}%`;gaps.append(gap);
+    }
+  }
+  const gapRow=element('div','timeline-axis');gapRow.append(element('span','timeline-label',''),gaps);timeline.append(gapRow);
+  if(layout.undated.length) {
+    const button=element('button','secondary',`${layout.undated.length} cycles with unknown time`);button.type='button';button.addEventListener('click',()=>showTimelineRecords(layout.undated,button));timeline.append(button);
+  }
+  timelineVisibleCycles=layout.dated.length+layout.undated.length;
+  timelineStatusText=timelineCycleSummary(timelineVisibleCycles);
+  $('timeline-status').textContent=timelineStatusText;
+}
+$('timeline-close').addEventListener('click',closeTimelineRecords);
+$('timeline-details').addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();closeTimelineRecords();}});
+$('timeline-zoom').addEventListener('click',()=>{
+  const times=timelineSelection?.map(p=>p.time).filter(Number.isFinite) || [];
+  if(times.length<2 || Math.min(...times)===Math.max(...times))return;
+  timelineZoom=[Math.min(...times),Math.max(...times)];closeTimelineRecords();drawCheckTimeline(true);$('timeline-reset').focus();
+});
+$('timeline-reset').addEventListener('click',()=>{timelineZoom=null;timelineSelection=null;$('timeline-details').hidden=true;drawCheckTimeline(true);$('timeline-range').focus();});
 function summaryText(s) {
   const availability = p => `${p.toUpperCase()} sampled ${fmt(s[p].percentage)}${s[p].percentage == null ? '' : '%'} (${s[p].successful_checks}/${s[p].valid_checks}; ${s[p].excluded_checks} unknown)`;
   return `${s.record_count} records · ${s.valid_measurements} valid · ${s.unknown_measurements} unknown · exact RTT ${s.exact_rtt_count}, mean ${fmt(s.average_latency_ms)} ms, min ${fmt(s.minimum_latency_ms)} / max ${fmt(s.maximum_latency_ms)} ms · missing RTT ${s.missing_rtt_count} · mean loss ${fmt(s.average_packet_loss_pct)}% (${s.valid_loss_count} valid; ${s.missing_loss_count} missing) · ${availability('icmp')} · ${availability('tcp')}`;
@@ -383,12 +499,16 @@ function drawComparisonChart(metric) {
   ctx.textAlign='right';ctx.fillText(new Date(bounds[1]).toLocaleString(),width-right,height-9);
   canvas.setAttribute('aria-label',`${metric} comparison. ${comparisonData.series.map(s=>s.name).join(', ')}. See per-device summaries for values.`);
 }
-$('history-range').addEventListener('change', () => {
-  historyRange=$('history-range').value; historyWindow=null; rangeSummary=null; history=[];
+function changeHistoryRange(value) {
+  timelineZoom=null;timelineSelection=null;$('timeline-details').hidden=true;
+  $('history-range').value=value;$('timeline-range').value=value;
+  historyRange=value; historyWindow=null; rangeSummary=null; history=[];
   render();
   void drawHistory().catch(()=>{}); void loadComparison();
   void loadAdvancedAnalytics();
-});
+}
+$('history-range').addEventListener('change',()=>changeHistoryRange($('history-range').value));
+$('timeline-range').addEventListener('change',()=>changeHistoryRange($('timeline-range').value));
 window.addEventListener('resize', renderComparison);
 const incidentConditions = {icmp_unavailable:'ICMP unavailable',tcp_unavailable:'TCP service unavailable',packet_loss:'Excessive packet loss',high_latency:'High exact RTT'};
 let incidentRows=[],incidentRequest=0,incidentDetailId=null,incidentDetail=null,incidentDetailRequest=0,incidentAckBusy=false,incidentNoteDraft='',incidentDeviceKey='',incidentRenderedKey='';
